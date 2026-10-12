@@ -36,7 +36,7 @@ class NostalgiaForInfinityX8_Combined(NostalgiaForInfinityX8):
 
     def version(self) -> str:
         base_ver = super().version()
-        return f"{base_ver} + CustomShortSignals_v3.1_Tag721_Opt"
+        return f"{base_ver} + CustomShortSignals_v3.3_Tag705_Apex"
 
     def __init__(self, config: dict) -> None:
         super().__init__(config)

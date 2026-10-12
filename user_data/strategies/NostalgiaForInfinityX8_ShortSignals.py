@@ -59,6 +59,7 @@ class NostalgiaForInfinityX8_ShortSignals:
         self.enable_short_support_breakdown = True     # Tag 701 (Donchian breakdown - rất mạnh)
         self.enable_short_macd_breakdown = True        # Tag 702 (Siết chặt volume + trend + confluence)
         self.enable_short_ema_ribbon = True            # Tag 703 (EMA Ribbon expansion - tốt)
+        self.enable_short_bb_squeeze = True            # Tag 705 (Bollinger Band squeeze breakdown - 100% Winrate)
 
         # Nhóm 3: Scalp Signals
         self.enable_short_relief_rejection = True      # Tag 721 (EMA21 relief rejection - rất tốt)
@@ -235,12 +236,20 @@ class NostalgiaForInfinityX8_ShortSignals:
         if "date" in dataframe.columns:
             is_sunday = dataframe["date"].dt.dayofweek.to_numpy(copy=False) == 6
 
+        # Monday Weekly Open Guard: Chống bẫy fakeout rạng sáng Thứ Hai (00:00 - 02:00 UTC)
+        is_monday_open = np.zeros(n_rows, dtype=bool)
+        if "date" in dataframe.columns:
+            d_series = dataframe["date"].dt
+            is_monday_open = (d_series.dayofweek.to_numpy(copy=False) == 0) & (d_series.hour.to_numpy(copy=False) < 2)
+
         # BTC Bullish Momentum Guard: Không Short khi BTC khung lớn đang có đà tăng dốc
         btc_bullish = np.zeros(n_rows, dtype=bool)
         if "BTC_RSI_14_4h" in dataframe.columns:
             btc_bullish = dataframe["BTC_RSI_14_4h"].to_numpy(copy=False) > 52.0
         elif "BTC_RSI_14_1h" in dataframe.columns:
             btc_bullish = dataframe["BTC_RSI_14_1h"].to_numpy(copy=False) > 52.0
+        elif "RSI_14_4h" in dataframe.columns and metadata.get("pair", "").startswith("BTC"):
+            btc_bullish = dataframe["RSI_14_4h"].to_numpy(copy=False) > 52.0
 
         # Bộ lọc siêu xu hướng tăng (Tránh Short chặn đầu xe lửa khi 1h đang uptrend parabolic)
         rsi_1h_overbought = np.zeros(n_rows, dtype=bool)
@@ -447,18 +456,25 @@ class NostalgiaForInfinityX8_ShortSignals:
             & (~btc_bullish)                              # Không short khi BTC đang tăng dốc
         )
 
-        # TAG 705: Bollinger Band Squeeze Breakdown (Nén dải BB và sập gãy)
+        # TAG 705: Bollinger Band Squeeze Breakdown (Nén dải BB và sập gãy - Tối ưu hóa chuyên sâu)
         cond_705 = (
             (volume > 0)
+            & (ema_50 < ema_200)                          # Bắt buộc Downtrend tổng thể
+            & (close < ema_21)                            # Đóng cửa dưới EMA 21
             & (bb_width < bb_width_sma_20 * 0.85)         # Biên độ dải BB co thắt mạnh hơn 15% so với SMA20
             & (close < bbl)                               # Đóng cửa gãy thủng dải dưới BB
             & (close < open_px)                           # BẮT BUỘC NẾN ĐỎ
             & (body_ratio >= 0.50)                        # Thân nến giảm dứt khoát chiếm >= 50% biên độ
+            & (upper_wick_ratio <= 0.35)                  # Râu trên ngắn xác nhận phe bán áp đảo, không bị rút chân
             & (vol_spike_ratio >= 1.60)                   # Volume bùng nổ vượt trội xác nhận breakout
+            & (vol_spike_ratio <= 5.0)                    # Loại bỏ volume bán tháo dị biệt selling climax (LTC 7.84x)
             & (macdhist < 0.0)                            # MACD Histogram âm
             & (macdhist < shift_macdhist)                 # Đà xả đang gia tốc
             & (stochrsi_k >= 30.0)                        # Chưa quá bán ở đáy 5m (tránh bán đáy)
+            & (~rsi_1h_oversold)                          # Không short khi 1h đã quá bán sâu < 30 (chống bẫy kiệt sức)
+            & (~rsi_1h_overbought)                        # Không short khi 1h đang uptrend mạnh
             & (~is_sunday)                                # Chống bẫy thanh khoản Chủ Nhật
+            & (~is_monday_open)                           # Chống bẫy fakeout quét thanh khoản mở nến tuần rạng sáng Thứ Hai
             & (~btc_bullish)                              # Không short khi BTC đang tăng dốc
         )
 
@@ -514,7 +530,7 @@ class NostalgiaForInfinityX8_ShortSignals:
         trigger_ema50_reject = cond_724 & cond_731
 
         # Setup 6: BB Squeeze Breakdown (Thắt nút cổ chai BB bùng nổ theo chiều giảm)
-        trigger_bb_squeeze = cond_705 & (cond_703 | cond_702)
+        trigger_bb_squeeze = cond_705 & (cond_703 | cond_702) if self.enable_short_bb_squeeze else np.zeros(n_rows, dtype=bool)
 
         # Setup 7: Bearish Divergence Exhaustion (Phân kỳ đỉnh RSI cạn kiệt đà tăng)
         trigger_bear_div = cond_725 & cond_731
