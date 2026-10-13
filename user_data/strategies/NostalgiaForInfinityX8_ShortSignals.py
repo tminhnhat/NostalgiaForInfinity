@@ -316,10 +316,13 @@ class NostalgiaForInfinityX8_ShortSignals:
             & (close < ema_9) & (close < ema_21)          # Nằm dưới EMA 9 và EMA 21
             & (ema_50 < ema_200)                          # Downtrend tổng thể
             & (vol_spike_ratio >= 1.25)                   # Volume xả gia tăng
+            & (vol_spike_ratio <= 5.0)                    # Loại bỏ volume dị biệt selling climax
             & (rsi_14 > 28.0) & (rsi_14 < 46.0)           # Đang có quán tính giảm, chưa quá bán
             & (stochrsi_k >= 20.0)                        # Chống bán tháo ở đáy 5m
+            & (~rsi_1h_oversold)                          # Không short khi 1h đã quá bán sâu < 30
             & (~rsi_1h_overbought)                        # Không short nếu khung 1h đang siêu tăng
             & (~is_sunday)                                # Chống bẫy thanh khoản Chủ Nhật
+            & (~is_monday_open)                           # Chống bẫy fakeout rạng sáng Thứ Hai
             & (~btc_bullish)                              # Không short khi BTC đang tăng dốc
         )
 
@@ -338,11 +341,13 @@ class NostalgiaForInfinityX8_ShortSignals:
             & (close < ema_9)
             & (close < open_px)
             & (vol_spike_ratio >= 1.25)                   # Chuẩn volume bán xác nhận từ 1.25 trở lên
+            & (vol_spike_ratio <= 5.0)                    # Loại bỏ volume dị biệt selling climax
             & (rsi_14 > 30.0) & (rsi_14 < 46.0)
             & (stochrsi_k >= 20.0)                        # Chống bán tháo ở đáy 5m
             & (~rsi_1h_overbought)                        # Không short nếu 1h đang siêu tăng
             & (~rsi_1h_oversold)                          # Không short nếu 1h đã quá bán sâu < 30 (chống bẫy đảo chiều)
             & (~is_sunday)                                # Chống bẫy thanh khoản Chủ Nhật
+            & (~is_monday_open)                           # Chống bẫy fakeout rạng sáng Thứ Hai
             & (~btc_bullish)                              # Không short khi BTC đang tăng dốc
         )
 
@@ -362,6 +367,7 @@ class NostalgiaForInfinityX8_ShortSignals:
             & (~rsi_1h_oversold)                          # Không short khi 1h đã quá bán sâu < 30
             & (~rsi_1h_overbought)                        # Không short khi 1h đang uptrend mạnh
             & (~is_sunday)                                # Chống bẫy thanh khoản Chủ Nhật
+            & (~is_monday_open)                           # Chống bẫy fakeout rạng sáng Thứ Hai
             & (~btc_bullish)
         )
 
@@ -377,10 +383,13 @@ class NostalgiaForInfinityX8_ShortSignals:
             & (close < ema_21) & (close < ema_50)
             & (close < open_px)
             & (vol_spike_ratio >= 1.20)                   # Lực bán đột biến xác nhận
+            & (vol_spike_ratio <= 5.0)                    # Loại bỏ volume dị biệt selling climax
             & (rsi_14 > 28.0) & (rsi_14 < 48.0)
             & (stochrsi_k >= 20.0)                        # BẢO VỆ CHỐNG BÁN ĐÁY: Không short khi StochRSI đã cạn kiệt ở đáy
             & ((close < shift_low_12) | btc_dumping)
+            & (~rsi_1h_oversold)                          # Không short khi 1h đã quá bán sâu < 30
             & (~is_sunday)                                # Chống bẫy thanh khoản Chủ Nhật
+            & (~is_monday_open)                           # Chống bẫy fakeout rạng sáng Thứ Hai
             & (~btc_bullish)                              # Không short khi BTC đang tăng dốc
         )
 
@@ -402,6 +411,7 @@ class NostalgiaForInfinityX8_ShortSignals:
             & (~rsi_1h_oversold)                          # Không short khi 1h đã quá bán sâu < 30
             & (~rsi_1h_overbought)                        # Không short khi 1h đang uptrend mạnh
             & (~is_sunday)                                # Chống bẫy thanh khoản Chủ Nhật
+            & (~is_monday_open)                           # Chống bẫy fakeout rạng sáng Thứ Hai
             & (~btc_bullish)                              # Không short khi BTC đang tăng dốc
         )
 
@@ -417,6 +427,10 @@ class NostalgiaForInfinityX8_ShortSignals:
             & (shift_k >= 75.0)
             & (close < open_px)
             & (vol_spike_ratio >= 1.20)
+            & (~rsi_1h_oversold)                          # Không short khi 1h đã quá bán sâu < 30
+            & (~is_sunday)                                # Chống bẫy thanh khoản Chủ Nhật
+            & (~is_monday_open)                           # Chống bẫy fakeout rạng sáng Thứ Hai
+            & (~btc_bullish)                              # Không short khi BTC đang tăng dốc
         )
 
         # TAG 723: Upper Bollinger Band Rejection Scalp
@@ -432,6 +446,7 @@ class NostalgiaForInfinityX8_ShortSignals:
             & (vol_spike_ratio >= 1.20)
             & (rsi_14 >= 58.0)
             & (~is_sunday)                                # Chống bẫy thanh khoản Chủ Nhật
+            & (~is_monday_open)                           # Chống bẫy fakeout rạng sáng Thứ Hai
             & (~btc_bullish)                              # Không short khi BTC đang tăng dốc
         )
 
@@ -453,6 +468,7 @@ class NostalgiaForInfinityX8_ShortSignals:
             & (~rsi_1h_oversold)                          # Không short khi 1h đã quá bán sâu < 30
             & (~rsi_1h_overbought)                        # Không short khi 1h đang quá mua/parabolic
             & (~is_sunday)                                # Chống bẫy thanh khoản Chủ Nhật
+            & (~is_monday_open)                           # Chống bẫy fakeout rạng sáng Thứ Hai
             & (~btc_bullish)                              # Không short khi BTC đang tăng dốc
         )
 
@@ -490,6 +506,7 @@ class NostalgiaForInfinityX8_ShortSignals:
             & (rsi_14 >= 58.0)                            # RSI ở vùng phân phối
             & (vol_spike_ratio >= 1.25)                   # Volume xả phân phối
             & (~is_sunday)                                # Chống bẫy thanh khoản Chủ Nhật
+            & (~is_monday_open)                           # Chống bẫy fakeout rạng sáng Thứ Hai
             & (~btc_bullish)                              # Không short khi BTC đang tăng dốc
         )
 
@@ -505,6 +522,7 @@ class NostalgiaForInfinityX8_ShortSignals:
             & (stochrsi_k >= 22.0)                        # Chống bán tháo ở đáy cạn kiệt
             & btc_dumping                                 # Đồng pha BTC xả mạnh trên 4h
             & (~is_sunday)                                # Chống bẫy thanh khoản Chủ Nhật
+            & (~is_monday_open)                           # Chống bẫy fakeout rạng sáng Thứ Hai
             & (~btc_bullish)                              # Không short khi BTC đang tăng dốc
         )
 
