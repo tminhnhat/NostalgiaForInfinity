@@ -7,6 +7,7 @@ import logging
 from datetime import datetime
 from typing import Optional
 import numpy as np
+import pandas as pd
 from pandas import DataFrame
 
 from freqtrade.persistence import Trade, Order
@@ -65,12 +66,14 @@ class NostalgiaForInfinityX8_Combined(NostalgiaForInfinityX8):
 
     def informative_pairs(self):
         """
-        Extend informative pairs to include BTC 1h data for market breadth correlation tracking.
+        Extend informative pairs to include BTC 1h and 15m data for market breadth correlation tracking.
         """
         pairs = super().informative_pairs()
         btc_pair = self.btc_informative_pair()
         if (btc_pair, "1h") not in pairs:
             pairs.append((btc_pair, "1h"))
+        if (btc_pair, "15m") not in pairs:
+            pairs.append((btc_pair, "15m"))
         return pairs
 
     def populate_indicators(self, df: DataFrame, metadata: dict) -> DataFrame:
@@ -191,6 +194,7 @@ class NostalgiaForInfinityX8_Combined(NostalgiaForInfinityX8):
 
         # Additional protection for short trades
         if side == "short":
+            tags = entry_tag.split() if entry_tag else []
             open_trades = Trade.get_open_trades()
             open_shorts = [t for t in open_trades if getattr(t, "is_short", False)]
 
@@ -207,45 +211,90 @@ class NostalgiaForInfinityX8_Combined(NostalgiaForInfinityX8):
             # Triệt tiêu các cú stop-hunt giả phá đáy đầu tuần của cá mập (như ca ARB -97 USDT ngày 31/08).
             # Đặc biệt chặn các lệnh bán đuổi phá đáy (breakdown setups: 701, 702, 703, 705, 706) dễ bị dính bear trap.
             if current_time.weekday() == 0 and 13 <= current_time.hour < 15:
-                tags = entry_tag.split() if entry_tag else []
                 if any(t in ["701", "702", "703", "705", "706"] for t in tags):
                     log.info(
                         "Monday US Open Guard: Blocked %s breakdown short (%s) during US opening volatility sweep (%s)",
                         pair, entry_tag, current_time,
                     )
                     return False
+                # Chặn relief bounce short (721, 724) trong khung giờ mở cửa chính thức của phiên Mỹ thứ Hai (14:00 - 15:00 UTC, triệt tiêu DOT -94.73 USDT)
+                if current_time.hour == 14 and any(t in ["721", "724"] for t in tags):
+                    log.info(
+                        "Monday US Open Guard (Relief Bounce): Blocked %s relief bounce short (%s) during US open peak sweep (%s)",
+                        pair, entry_tag, current_time,
+                    )
+                    return False
 
-            # 3. Correlation / Market Breadth Guard:
-            # Khi đã có >= 2 lệnh Short đang mở, kiểm tra xem BTC có đang hồi phục không:
-            if len(open_shorts) >= 2 and hasattr(self, "dp") and self.dp:
+            # BTC Data Context for Market Breadth & Macro Filter Guards
+            if hasattr(self, "dp") and self.dp:
                 btc_pair = self.btc_informative_pair()
+                cur_ts = pd.to_datetime(current_time, utc=True)
+
                 # Kiểm tra BTC 1h
-                btc_df = self.dp.get_pair_dataframe(pair=btc_pair, timeframe="1h")
-                if btc_df is not None and not btc_df.empty and "date" in btc_df.columns:
-                    btc_past = btc_df[btc_df["date"] <= current_time]
-                    if len(btc_past) >= 25:
-                        btc_close = btc_past["close"].iloc[-1]
-                        btc_ema21 = ta.EMA(btc_past["close"].to_numpy(copy=False), timeperiod=21)[-1]
-                        if btc_close > btc_ema21:
-                            log.info(
-                                "Market Breadth Guard (1h): Blocked %s short entry (%d active shorts & BTC 1h close %.1f > EMA21 %.1f at %s)",
-                                pair, len(open_shorts), btc_close, btc_ema21, current_time,
-                            )
-                            return False
+                btc_df_1h = self.dp.get_pair_dataframe(pair=btc_pair, timeframe="1h")
+                btc_close = None
+                btc_ema21 = None
+                btc_rsi1h = None
+                if btc_df_1h is not None and not btc_df_1h.empty and "date" in btc_df_1h.columns:
+                    btc_past_1h = btc_df_1h[btc_df_1h["date"] <= cur_ts]
+                    if len(btc_past_1h) >= 25:
+                        btc_close = btc_past_1h["close"].iloc[-1]
+                        btc_ema21 = ta.EMA(btc_past_1h["close"].to_numpy(copy=False), timeperiod=21)[-1]
+                        btc_rsi1h = ta.RSI(btc_past_1h["close"].to_numpy(copy=False), timeperiod=14)[-1]
+
+                # Kiểm tra BTC 15m
+                btc_df_15m = self.dp.get_pair_dataframe(pair=btc_pair, timeframe="15m")
+                btc_rsi15m = None
+                if btc_df_15m is not None and not btc_df_15m.empty and "date" in btc_df_15m.columns:
+                    btc_past_15m = btc_df_15m[btc_df_15m["date"] <= cur_ts]
+                    if len(btc_past_15m) >= 25:
+                        btc_rsi15m = ta.RSI(btc_past_15m["close"].to_numpy(copy=False), timeperiod=14)[-1]
+
+                # 3. BTC Oversold Exhaustion Trap Guard (Upgrade 1):
+                # Chặn mở mới lệnh Short breakdown (701, 706) khi BTC 1h rơi vào vùng cạn kiệt bán tháo (34.0 <= RSI <= 37.5),
+                # nơi cá mập thường giăng bẫy đảo chiều chữ V (Bear Trap triệt tiêu OP -96 USDT và AVAX -101.56 USDT).
+                if any(t in ["701", "706"] for t in tags) and btc_rsi1h is not None and 34.0 <= btc_rsi1h <= 37.5:
+                    log.info(
+                        "BTC Oversold Exhaustion Guard: Blocked %s breakdown short (%s) due to BTC 1h RSI %.1f in bear trap zone [34.0, 37.5] at %s",
+                        pair, entry_tag, btc_rsi1h, current_time,
+                    )
+                    return False
+
+                # 4. BTC Momentum Filter cho Relief Bounces (Upgrade 3):
+                # Không Short bắt đỉnh hồi kỹ thuật chạm EMA (721, 724) khi BTC đang có đà phục hồi mạnh
+                # (RSI 15m > 54.0 hoặc RSI 1h > 54.0), tránh chặn đầu xe lửa khi thị trường đang dồn lực hồi phục (triệt tiêu DOT -94.73 USDT).
+                if any(t in ["721", "724"] for t in tags):
+                    has_btc_bull_mom = (btc_rsi15m is not None and btc_rsi15m > 54.0) or (btc_rsi1h is not None and btc_rsi1h > 54.0)
+                    if has_btc_bull_mom:
+                        log.info(
+                            "BTC Momentum Filter: Blocked %s relief bounce short (%s) due to strong BTC bullish momentum (RSI 15m: %s, 1h: %s) at %s",
+                            pair, entry_tag, f"{btc_rsi15m:.1f}" if btc_rsi15m else "N/A", f"{btc_rsi1h:.1f}" if btc_rsi1h else "N/A", current_time,
+                        )
+                        return False
+
+                # 5. Correlation / Market Breadth Guard (1h):
+                # Khi đã có >= 2 lệnh Short đang mở, kiểm tra xem BTC có đang hồi phục không:
+                if len(open_shorts) >= 2 and btc_close is not None and btc_ema21 is not None and btc_close > btc_ema21:
+                    log.info(
+                        "Market Breadth Guard (1h): Blocked %s short entry (%d active shorts & BTC 1h close %.1f > EMA21 %.1f at %s)",
+                        pair, len(open_shorts), btc_close, btc_ema21, current_time,
+                    )
+                    return False
 
                 # Kiểm tra BTC 5m (nếu BTC 5m đang hồi dốc trên EMA 21)
-                btc_5m = self.dp.get_pair_dataframe(pair=btc_pair, timeframe="5m")
-                if btc_5m is not None and not btc_5m.empty and "date" in btc_5m.columns:
-                    btc_past_5m = btc_5m[btc_5m["date"] <= current_time]
-                    if len(btc_past_5m) >= 25:
-                        btc_c_5m = btc_past_5m["close"].iloc[-1]
-                        btc_e21_5m = ta.EMA(btc_past_5m["close"].to_numpy(copy=False), timeperiod=21)[-1]
-                        if btc_c_5m > btc_e21_5m * 1.0010:
-                            log.info(
-                                "Market Breadth Guard (5m): Blocked %s short entry (%d active shorts & BTC 5m close %.1f > EMA21 %.1f at %s)",
-                                pair, len(open_shorts), btc_c_5m, btc_e21_5m, current_time,
-                            )
-                            return False
+                if len(open_shorts) >= 2:
+                    btc_5m = self.dp.get_pair_dataframe(pair=btc_pair, timeframe="5m")
+                    if btc_5m is not None and not btc_5m.empty and "date" in btc_5m.columns:
+                        btc_past_5m = btc_5m[btc_5m["date"] <= cur_ts]
+                        if len(btc_past_5m) >= 25:
+                            btc_c_5m = btc_past_5m["close"].iloc[-1]
+                            btc_e21_5m = ta.EMA(btc_past_5m["close"].to_numpy(copy=False), timeperiod=21)[-1]
+                            if btc_c_5m > btc_e21_5m * 1.0010:
+                                log.info(
+                                    "Market Breadth Guard (5m): Blocked %s short entry (%d active shorts & BTC 5m close %.1f > EMA21 %.1f at %s)",
+                                    pair, len(open_shorts), btc_c_5m, btc_e21_5m, current_time,
+                                )
+                                return False
 
             if entry_tag:
                 tags = entry_tag.split()
