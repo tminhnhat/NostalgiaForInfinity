@@ -36,7 +36,7 @@ class NostalgiaForInfinityX8_Combined(NostalgiaForInfinityX8):
 
     def version(self) -> str:
         base_ver = super().version()
-        return f"{base_ver} + CustomShortSignals_v3.4_Apex_Shield"
+        return f"{base_ver} + CustomShortSignals_v3.5_Apex_Shield"
 
     def __init__(self, config: dict) -> None:
         super().__init__(config)
@@ -203,7 +203,19 @@ class NostalgiaForInfinityX8_Combined(NostalgiaForInfinityX8):
                 )
                 return False
 
-            # 2. Correlation / Market Breadth Guard:
+            # 2. Monday US Open Guard: Chặn bẫy quét thanh khoản phiên Mỹ thứ Hai (13:00 - 15:00 UTC)
+            # Triệt tiêu các cú stop-hunt giả phá đáy đầu tuần của cá mập (như ca ARB -97 USDT ngày 31/08).
+            # Đặc biệt chặn các lệnh bán đuổi phá đáy (breakdown setups: 701, 702, 703, 705, 706) dễ bị dính bear trap.
+            if current_time.weekday() == 0 and 13 <= current_time.hour < 15:
+                tags = entry_tag.split() if entry_tag else []
+                if any(t in ["701", "702", "703", "705", "706"] for t in tags):
+                    log.info(
+                        "Monday US Open Guard: Blocked %s breakdown short (%s) during US opening volatility sweep (%s)",
+                        pair, entry_tag, current_time,
+                    )
+                    return False
+
+            # 3. Correlation / Market Breadth Guard:
             # Khi đã có >= 2 lệnh Short đang mở, kiểm tra xem BTC có đang hồi phục không:
             if len(open_shorts) >= 2 and hasattr(self, "dp") and self.dp:
                 btc_pair = self.btc_informative_pair()
