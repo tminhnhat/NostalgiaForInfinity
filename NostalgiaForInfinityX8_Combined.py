@@ -142,10 +142,30 @@ class NostalgiaForInfinityX8_Combined(NostalgiaForInfinityX8):
     ) -> Optional[str]:
         """
         Custom Exit Management for Combined Strategy:
-        Delegates fully to NostalgiaForInfinityX8 native exit pipeline to allow
-        dynamic trailing, bad trade controller, and multi-tier take-profit mechanisms.
+        1. Dead-Trade Momentum Failure Cut:
+           If trade has been open >= 24h, MFE never reached +0.8% leveraged (0.16% price),
+           and current profit is <= -40% (-8% price), cut early to avoid full -95% stoploss doom.
+        2. Delegates to NostalgiaForInfinityX8 native exit pipeline for all standard exits.
         """
         try:
+            trade_duration_hours = (current_time - trade.open_date_utc).total_seconds() / 3600.0
+            leverage = trade.leverage or 5.0
+            open_rate = trade.open_rate
+            enter_tag = trade.enter_tag if hasattr(trade, "enter_tag") and trade.enter_tag else "empty"
+
+            if trade.is_short:
+                min_r = trade.min_rate if trade.min_rate is not None else open_rate
+                mfe_lev = (open_rate - min_r) / open_rate * leverage
+            else:
+                max_r = trade.max_rate if trade.max_rate is not None else open_rate
+                mfe_lev = (max_r - open_rate) / open_rate * leverage
+
+            # Guard 1: Dead-Trade Momentum Failure Cut
+            # If trade has been open >= 24h, MFE never reached +0.8% leveraged (0.16% price),
+            # and current profit is <= -40% (-8% price), cut early to avoid full -95% stoploss doom.
+            if trade_duration_hours >= 24.0 and mfe_lev <= 0.008 and current_profit <= -0.40:
+                return f"exit_dead_trade_cut ( {enter_tag})"
+
             return super().custom_exit(
                 pair=pair,
                 trade=trade,
