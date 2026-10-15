@@ -156,15 +156,27 @@ class NostalgiaForInfinityX8_Combined(NostalgiaForInfinityX8):
             if trade.is_short:
                 min_r = trade.min_rate if trade.min_rate is not None else open_rate
                 mfe_lev = (open_rate - min_r) / open_rate * leverage
+
+                # Tier 1: Dead-Trade Momentum Failure Cut (24h)
+                # If trade has been open >= 24h, MFE never reached +0.8% leveraged (0.16% price),
+                # and current profit is <= -40% (-8% price), cut early to avoid full -95% stoploss doom.
+                if trade_duration_hours >= 24.0 and mfe_lev <= 0.008 and current_profit <= -0.40:
+                    return f"exit_dead_trade_cut_24h ( {enter_tag})"
+
+                # Tier 2: Dead Drift Cut (72h / 3 days)
+                # If trade has been open >= 72h, MFE never reached +4.5% leveraged (0.9% price),
+                # and current profit is <= -45% (-9% price), cut early to prevent full -95% catastrophic stop loss.
+                if trade_duration_hours >= 72.0 and mfe_lev <= 0.045 and current_profit <= -0.45:
+                    return f"exit_dead_drift_cut_72h ( {enter_tag})"
+
+                # Tier 3: Zombie Capital Freeing Cut (120h / 5 days)
+                # If trade has been open >= 120h (5 days), MFE never reached +10.0% leveraged (2.0% price),
+                # and current profit is <= -35% (-7% price), cut early to prevent 14-35 day stagnation & funding bleed.
+                if trade_duration_hours >= 120.0 and mfe_lev <= 0.100 and current_profit <= -0.35:
+                    return f"exit_zombie_trade_cut_5d ( {enter_tag})"
             else:
                 max_r = trade.max_rate if trade.max_rate is not None else open_rate
                 mfe_lev = (max_r - open_rate) / open_rate * leverage
-
-            # Guard 1: Dead-Trade Momentum Failure Cut
-            # If trade has been open >= 24h, MFE never reached +0.8% leveraged (0.16% price),
-            # and current profit is <= -40% (-8% price), cut early to avoid full -95% stoploss doom.
-            if trade_duration_hours >= 24.0 and mfe_lev <= 0.008 and current_profit <= -0.40:
-                return f"exit_dead_trade_cut ( {enter_tag})"
 
             return super().custom_exit(
                 pair=pair,
