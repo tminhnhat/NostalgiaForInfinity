@@ -37,7 +37,7 @@ class NostalgiaForInfinityX8_Combined(NostalgiaForInfinityX8):
 
     def version(self) -> str:
         base_ver = super().version()
-        return f"{base_ver} + CustomShortSignals_v3.5_Apex_Shield"
+        return f"{base_ver} + CustomShortSignals_v3.6.1_Shield_Triad_Climax23"
 
     def __init__(self, config: dict) -> None:
         super().__init__(config)
@@ -87,6 +87,10 @@ class NostalgiaForInfinityX8_Combined(NostalgiaForInfinityX8):
         # Additional Short-specific indicators
         df = self.short_strategy.populate_indicators(df, metadata)
 
+        df = df.copy()
+        import gc
+        gc.collect()
+
         return df
 
     def populate_entry_trend(self, df: DataFrame, metadata: dict) -> DataFrame:
@@ -129,6 +133,10 @@ class NostalgiaForInfinityX8_Combined(NostalgiaForInfinityX8):
             )
             df.loc[:, "enter_tag"] = merged_tags
 
+        df = df.copy()
+        import gc
+        gc.collect()
+
         return df
 
     def custom_exit(
@@ -157,6 +165,19 @@ class NostalgiaForInfinityX8_Combined(NostalgiaForInfinityX8):
                 min_r = trade.min_rate if trade.min_rate is not None else open_rate
                 mfe_lev = (open_rate - min_r) / open_rate * leverage
 
+                # Phương án 1 - Breakeven Protection Lock cho Breakdown Setups (Tag 705, 706):
+                # Nếu lệnh có Tag 705 hoặc 706 từng đạt lãi >= +1.5% giá (+7.5% đòn bẩy),
+                # mà hiện tại giá quay đầu về mức hòa vốn (<= +0.5% đòn bẩy = +0.1% giá),
+                # thoát lệnh ngay để bảo toàn vốn và tiền phí sàn, chống đảo chiều thành lỗ sâu.
+                if any(t in enter_tag for t in ["705", "706"]) and mfe_lev >= 0.075 and current_profit <= 0.005:
+                    return f"exit_short_breakeven_lock ( {enter_tag})"
+
+                # Phương án 1 - Quick Scalp Take Profit cho Breakdown Setups (Tag 705, 706):
+                # Nếu lệnh có Tag 705 hoặc 706 đạt mức lãi >= +1.8% giá (+9.0% đòn bẩy),
+                # chốt lời sớm để hiện thực hóa lợi nhuận của nhịp breakdown ngắn hạn.
+                if any(t in enter_tag for t in ["705", "706"]) and current_profit >= 0.090:
+                    return f"exit_short_scalp_tp ( {enter_tag})"
+
                 # Tier 1: Dead-Trade Momentum Failure Cut (24h)
                 # If trade has been open >= 24h, MFE never reached +0.8% leveraged (0.16% price),
                 # and current profit is <= -40% (-8% price), cut early to avoid full -95% stoploss doom.
@@ -164,15 +185,15 @@ class NostalgiaForInfinityX8_Combined(NostalgiaForInfinityX8):
                     return f"exit_dead_trade_cut_24h ( {enter_tag})"
 
                 # Tier 2: Dead Drift Cut (72h / 3 days)
-                # If trade has been open >= 72h, MFE never reached +4.5% leveraged (0.9% price),
-                # and current profit is <= -45% (-9% price), cut early to prevent full -95% catastrophic stop loss.
-                if trade_duration_hours >= 72.0 and mfe_lev <= 0.045 and current_profit <= -0.45:
+                # If trade has been open >= 72h and current profit is <= -45% (-9% price),
+                # cut early to prevent full -95% catastrophic stop loss.
+                if trade_duration_hours >= 72.0 and current_profit <= -0.45:
                     return f"exit_dead_drift_cut_72h ( {enter_tag})"
 
                 # Tier 3: Zombie Capital Freeing Cut (120h / 5 days)
-                # If trade has been open >= 120h (5 days), MFE never reached +10.0% leveraged (2.0% price),
-                # and current profit is <= -35% (-7% price), cut early to prevent 14-35 day stagnation & funding bleed.
-                if trade_duration_hours >= 120.0 and mfe_lev <= 0.100 and current_profit <= -0.35:
+                # If trade has been open >= 120h (5 days) and current profit is <= -35% (-7% price),
+                # cut early to prevent multi-week stagnation, negative funding & massive drawdown.
+                if trade_duration_hours >= 120.0 and current_profit <= -0.35:
                     return f"exit_zombie_trade_cut_5d ( {enter_tag})"
             else:
                 max_r = trade.max_rate if trade.max_rate is not None else open_rate
@@ -239,11 +260,21 @@ class NostalgiaForInfinityX8_Combined(NostalgiaForInfinityX8):
                 )
                 return False
 
-            # 2. Monday US Open Guard: Chặn bẫy quét thanh khoản phiên Mỹ thứ Hai (13:00 - 15:00 UTC)
-            # Triệt tiêu các cú stop-hunt giả phá đáy đầu tuần của cá mập (như ca ARB -97 USDT ngày 31/08).
-            # Đặc biệt chặn các lệnh bán đuổi phá đáy (breakdown setups: 701, 702, 703, 705, 706) dễ bị dính bear trap.
-            if current_time.weekday() == 0 and 13 <= current_time.hour < 15:
-                if any(t in ["701", "702", "703", "705", "706"] for t in tags):
+            # 2. Saturday Liquidity Trap Guard: Chống bẫy thanh khoản mỏng cuối tuần Thứ Bảy (quét stop loss các lệnh breakdown)
+            # Triệt tiêu các cú Stop Loss lớn nhất: DASH -92$, ONDO -90$, HYPE -90$, VVV -86$, RKLB -78$, ZEC -52$
+            if current_time.weekday() == 5:
+                if any(t in ["701", "702", "703", "705", "706", "731"] for t in tags):
+                    log.info(
+                        "Saturday Liquidity Trap Guard: Blocked %s breakdown short (%s) on low-liquidity Saturday (%s)",
+                        pair, entry_tag, current_time,
+                    )
+                    return False
+
+            # 3. Monday US Open & Pre-Market Guard: Chặn bẫy quét thanh khoản phiên Mỹ thứ Hai (12:00 - 15:00 UTC)
+            # Triệt tiêu các cú stop-hunt giả phá đáy đầu tuần của cá mập (như ca ONDO -91.17$ lúc 12:10 UTC và ARB -97$).
+            # Đặc biệt chặn các lệnh bán đuổi phá đáy (breakdown setups: 701, 702, 703, 705, 706, 731) dễ bị dính bear trap.
+            if current_time.weekday() == 0 and 12 <= current_time.hour < 15:
+                if any(t in ["701", "702", "703", "705", "706", "731"] for t in tags):
                     log.info(
                         "Monday US Open Guard: Blocked %s breakdown short (%s) during US opening volatility sweep (%s)",
                         pair, entry_tag, current_time,
@@ -282,24 +313,45 @@ class NostalgiaForInfinityX8_Combined(NostalgiaForInfinityX8):
                     if len(btc_past_15m) >= 25:
                         btc_rsi15m = ta.RSI(btc_past_15m["close"].to_numpy(copy=False), timeperiod=14)[-1]
 
-                # 3. BTC Oversold Exhaustion Trap Guard (Upgrade 1):
-                # Chặn mở mới lệnh Short breakdown (701, 706) khi BTC 1h rơi vào vùng cạn kiệt bán tháo (34.0 <= RSI <= 37.5),
-                # nơi cá mập thường giăng bẫy đảo chiều chữ V (Bear Trap triệt tiêu OP -96 USDT và AVAX -101.56 USDT).
-                if any(t in ["701", "706"] for t in tags) and btc_rsi1h is not None and 34.0 <= btc_rsi1h <= 37.5:
+                # 4. Extreme BTC Capitulation Climax Floor (Option 1 Triad Shield):
+                # Khi BTC 1h RSI <= 23.0 (như cú sập hoảng loạn Black Monday và TIA -98.68 USDT tại RSI 22.5),
+                # thị trường rơi vào Selling Climax cực độ và áp lực thanh lý cưỡng bức, ngay trước cú giật nảy hình chữ V bão táp.
+                # Tuyệt đối cấm mở bất kỳ vị thế Short nào tại vùng cạn kiệt bán tháo này.
+                if btc_rsi1h is not None and btc_rsi1h <= 23.0:
                     log.info(
-                        "BTC Oversold Exhaustion Guard: Blocked %s breakdown short (%s) due to BTC 1h RSI %.1f in bear trap zone [34.0, 37.5] at %s",
+                        "BTC Capitulation Climax Guard: Blocked %s short (%s) due to extreme BTC 1h RSI panic %.1f <= 23.0 at %s",
                         pair, entry_tag, btc_rsi1h, current_time,
                     )
                     return False
 
-                # 4. BTC Momentum Filter cho Relief Bounces (Upgrade 3):
-                # Không Short bắt đỉnh hồi kỹ thuật chạm EMA (721, 724) khi BTC đang có đà phục hồi mạnh
+                # 5. BTC Oversold Exhaustion Trap Guard (Upgrade 1 & Option 1 Tag 705 & Option C Tag 722):
+                # Chặn mở mới lệnh Short breakdown / scalp (701, 705, 706, 722) khi BTC 1h rơi vào vùng cạn kiệt bán tháo:
+                # - Quá bán cùng cực: btc_rsi1h <= 33.5 (như GOAT 30.4, XPL 24.2, ZK 33.1, ALGO 33.1)
+                # - Vùng bẫy Bear Trap đảo chiều: 34.0 <= btc_rsi1h <= 37.5 (như HBAR 34.2, 1000PEPE 34.8, RKLB 35.5, ENA 36.9)
+                if any(t in ["701", "705", "706", "722"] for t in tags) and btc_rsi1h is not None:
+                    if btc_rsi1h <= 33.5 or (34.0 <= btc_rsi1h <= 37.5):
+                        log.info(
+                            "BTC Oversold Exhaustion Guard: Blocked %s short (%s) due to BTC 1h RSI %.1f at %s",
+                            pair, entry_tag, btc_rsi1h, current_time,
+                        )
+                        return False
+
+                # Chặn Tag 705 khi BTC 1h đang trong xu hướng tăng (Close > EMA21) - Triệt tiêu bẫy TIA -40.5 USDT
+                if "705" in tags and btc_close is not None and btc_ema21 is not None and btc_close > btc_ema21:
+                    log.info(
+                        "BTC Bull Trend Guard: Blocked %s breakdown short (705) due to BTC 1h close %.1f > EMA21 %.1f at %s",
+                        pair, entry_tag, btc_close, btc_ema21, current_time,
+                    )
+                    return False
+
+                # 4. BTC Momentum Filter cho Relief Bounces & Scalp Pullbacks (Upgrade 3 & Option C):
+                # Không Short chạm EMA / StochRSI cross-down (721, 722, 724) khi BTC đang có đà phục hồi mạnh
                 # (RSI 15m > 54.0 hoặc RSI 1h > 54.0), tránh chặn đầu xe lửa khi thị trường đang dồn lực hồi phục (triệt tiêu DOT -94.73 USDT).
-                if any(t in ["721", "724"] for t in tags):
+                if any(t in ["721", "722", "724"] for t in tags):
                     has_btc_bull_mom = (btc_rsi15m is not None and btc_rsi15m > 54.0) or (btc_rsi1h is not None and btc_rsi1h > 54.0)
                     if has_btc_bull_mom:
                         log.info(
-                            "BTC Momentum Filter: Blocked %s relief bounce short (%s) due to strong BTC bullish momentum (RSI 15m: %s, 1h: %s) at %s",
+                            "BTC Momentum Filter: Blocked %s relief/scalp short (%s) due to strong BTC bullish momentum (RSI 15m: %s, 1h: %s) at %s",
                             pair, entry_tag, f"{btc_rsi15m:.1f}" if btc_rsi15m else "N/A", f"{btc_rsi1h:.1f}" if btc_rsi1h else "N/A", current_time,
                         )
                         return False

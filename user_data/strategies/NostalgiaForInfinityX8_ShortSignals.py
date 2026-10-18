@@ -231,22 +231,22 @@ class NostalgiaForInfinityX8_ShortSignals:
         elif "BTC_RSI_14_4h" in dataframe.columns:
             btc_dumping = dataframe["BTC_RSI_14_4h"].to_numpy(copy=False) < 45.0
 
-        # Sunday Liquidity Guard: Chống bẫy thanh khoản mỏng ngày Chủ Nhật (MM bẫy Stoploss)
+        # Weekend Liquidity Guards: Chống bẫy thanh khoản mỏng cuối tuần (MM bẫy Stoploss / Short Squeeze)
         is_sunday = np.zeros(n_rows, dtype=bool)
-        if "date" in dataframe.columns:
-            is_sunday = dataframe["date"].dt.dayofweek.to_numpy(copy=False) == 6
-
+        is_saturday = np.zeros(n_rows, dtype=bool)
         # Monday Trap Guards:
         # 1. Weekly Open Trap: Rạng sáng Thứ Hai (00:00 - 02:00 UTC) khi nến tuần mới mở (áp dụng toàn bộ tags)
         is_monday_morning = np.zeros(n_rows, dtype=bool)
-        # 2. US Open Trap: Phiên Mỹ Thứ Hai mở cửa (13:00 - 15:00 UTC) khi cá mập quét thanh khoản phá đáy (breakdowns: 701, 702, 703, 705, 706)
+        # 2. US Open Trap: Phiên Mỹ Thứ Hai mở cửa & quét thanh khoản sớm (12:00 - 15:00 UTC) khi cá mập quét thanh khoản phá đáy
         is_monday_us_open = np.zeros(n_rows, dtype=bool)
         if "date" in dataframe.columns:
             d_series = dataframe["date"].dt
             dow = d_series.dayofweek.to_numpy(copy=False)
             hr = d_series.hour.to_numpy(copy=False)
+            is_sunday = (dow == 6)
+            is_saturday = (dow == 5)
             is_monday_morning = (dow == 0) & (hr < 2)
-            is_monday_us_open = (dow == 0) & (hr >= 13) & (hr < 15)
+            is_monday_us_open = (dow == 0) & (hr >= 12) & (hr < 15)
 
         # BTC Bullish Momentum Guard: Không Short khi BTC khung lớn đang có đà tăng dốc
         btc_bullish = np.zeros(n_rows, dtype=bool)
@@ -327,6 +327,7 @@ class NostalgiaForInfinityX8_ShortSignals:
             & (stochrsi_k >= 20.0)                        # Chống bán tháo ở đáy 5m
             & (~rsi_1h_oversold)                          # Không short khi 1h đã quá bán sâu < 30
             & (~rsi_1h_overbought)                        # Không short nếu khung 1h đang siêu tăng
+            & (~is_saturday)                              # Chống bẫy thanh khoản Thứ Bảy
             & (~is_sunday)                                # Chống bẫy thanh khoản Chủ Nhật
             & (~is_monday_morning)                        # Chống bẫy fakeout rạng sáng Thứ Hai
             & (~is_monday_us_open)                         # Chống bẫy quét thanh khoản phiên Mỹ Thứ Hai
@@ -353,6 +354,7 @@ class NostalgiaForInfinityX8_ShortSignals:
             & (stochrsi_k >= 20.0)                        # Chống bán tháo ở đáy 5m
             & (~rsi_1h_overbought)                        # Không short nếu 1h đang siêu tăng
             & (~rsi_1h_oversold)                          # Không short nếu 1h đã quá bán sâu < 30 (chống bẫy đảo chiều)
+            & (~is_saturday)                              # Chống bẫy thanh khoản Thứ Bảy
             & (~is_sunday)                                # Chống bẫy thanh khoản Chủ Nhật
             & (~is_monday_morning)                        # Chống bẫy fakeout rạng sáng Thứ Hai
             & (~is_monday_us_open)                         # Chống bẫy quét thanh khoản phiên Mỹ Thứ Hai
@@ -374,8 +376,10 @@ class NostalgiaForInfinityX8_ShortSignals:
             & (stochrsi_k >= 20.0)                        # Chống bán tháo ở đáy 5m
             & (~rsi_1h_oversold)                          # Không short khi 1h đã quá bán sâu < 30
             & (~rsi_1h_overbought)                        # Không short khi 1h đang uptrend mạnh
+            & (~is_saturday)                              # Chống bẫy thanh khoản Thứ Bảy
             & (~is_sunday)                                # Chống bẫy thanh khoản Chủ Nhật
             & (~is_monday_morning)                        # Chống bẫy fakeout rạng sáng Thứ Hai
+            & (~is_monday_us_open)                         # Chống bẫy quét thanh khoản phiên Mỹ Thứ Hai
             & (~btc_bullish)
         )
 
@@ -396,6 +400,7 @@ class NostalgiaForInfinityX8_ShortSignals:
             & (stochrsi_k >= 20.0)                        # BẢO VỆ CHỐNG BÁN ĐÁY: Không short khi StochRSI đã cạn kiệt ở đáy
             & ((close < shift_low_12) | btc_dumping)
             & (~rsi_1h_oversold)                          # Không short khi 1h đã quá bán sâu < 30
+            & (~is_saturday)                              # Chống bẫy thanh khoản Thứ Bảy
             & (~is_sunday)                                # Chống bẫy thanh khoản Chủ Nhật
             & (~is_monday_morning)                        # Chống bẫy fakeout rạng sáng Thứ Hai
             & (~is_monday_us_open)                         # Chống bẫy quét thanh khoản phiên Mỹ Thứ Hai
@@ -481,7 +486,7 @@ class NostalgiaForInfinityX8_ShortSignals:
             & (~btc_bullish)                              # Không short khi BTC đang tăng dốc
         )
 
-        # TAG 705: Bollinger Band Squeeze Breakdown (Nén dải BB và sập gãy - Tối ưu hóa chuyên sâu)
+        # TAG 705: Bollinger Band Squeeze Breakdown (Nén dải BB và sập gãy - Tối ưu hóa chuyên sâu Phương án 1)
         cond_705 = (
             (volume > 0)
             & (ema_50 < ema_200)                          # Bắt buộc Downtrend tổng thể
@@ -492,12 +497,14 @@ class NostalgiaForInfinityX8_ShortSignals:
             & (body_ratio >= 0.50)                        # Thân nến giảm dứt khoát chiếm >= 50% biên độ
             & (upper_wick_ratio <= 0.35)                  # Râu trên ngắn xác nhận phe bán áp đảo, không bị rút chân
             & (vol_spike_ratio >= 1.60)                   # Volume bùng nổ vượt trội xác nhận breakout
-            & (vol_spike_ratio <= 5.0)                    # Loại bỏ volume bán tháo dị biệt selling climax (LTC 7.84x)
+            & (vol_spike_ratio <= 3.50)                   # GIỚI HẠN TRẦN: Loại bỏ volume bán tháo dị biệt selling climax (hạ từ 5.0 xuống 3.50)
             & (macdhist < 0.0)                            # MACD Histogram âm
             & (macdhist < shift_macdhist)                 # Đà xả đang gia tốc
+            & (rsi_14 >= 33.0)                            # CHỐNG BÁN ĐÁY: Không short khi RSI đã quá bán cạn kiệt
             & (stochrsi_k >= 30.0)                        # Chưa quá bán ở đáy 5m (tránh bán đáy)
             & (~rsi_1h_oversold)                          # Không short khi 1h đã quá bán sâu < 30 (chống bẫy kiệt sức)
             & (~rsi_1h_overbought)                        # Không short khi 1h đang uptrend mạnh
+            & (~is_saturday)                              # Chống bẫy thanh khoản Thứ Bảy
             & (~is_sunday)                                # Chống bẫy thanh khoản Chủ Nhật
             & (~is_monday_morning)                        # Chống bẫy fakeout quét thanh khoản mở nến tuần rạng sáng Thứ Hai
             & (~is_monday_us_open)                         # Chống bẫy quét thanh khoản phiên Mỹ Thứ Hai
@@ -521,6 +528,8 @@ class NostalgiaForInfinityX8_ShortSignals:
         )
 
         # TAG 706: Donchian 48-Period Macro Breakdown (Gãy hỗ trợ lớn 4 giờ)
+        # Nâng cấp Phương án A: Thêm giới hạn trần volume chống selling climax,
+        # nâng bộ lọc RSI/StochRSI chống bán đáy cạn kiệt, bắt buộc nến đỏ xác nhận.
         shift_low_48 = np.roll(rolling_low_48, 1)
         cond_706 = (
             (volume > 0)
@@ -529,8 +538,11 @@ class NostalgiaForInfinityX8_ShortSignals:
             & (lower_wick_ratio <= 0.25)                  # Râu dưới rất ngắn (lực bán một chiều, không rút chân)
             & (close < ema_9) & (close < ema_21) & (close < ema_50)  # Nằm dưới EMA 9, 21, 50
             & (vol_spike_ratio >= 1.40)                   # Volume xả đột biến
-            & (stochrsi_k >= 22.0)                        # Chống bán tháo ở đáy cạn kiệt
+            & (vol_spike_ratio <= 3.50)                   # GIỚI HẠN TRẦN: Chống bẫy selling climax hoảng loạn
+            & (rsi_14 >= 33.0)                            # CHỐNG BÁN ĐÁY: Không short khi RSI đã quá bán cạn kiệt
+            & (stochrsi_k >= 25.0)                        # Chống bán tháo ở đáy cạn kiệt
             & btc_dumping                                 # Đồng pha BTC xả mạnh trên 4h
+            & (~is_saturday)                              # Chống bẫy thanh khoản Thứ Bảy
             & (~is_sunday)                                # Chống bẫy thanh khoản Chủ Nhật
             & (~is_monday_morning)                        # Chống bẫy fakeout rạng sáng Thứ Hai
             & (~is_monday_us_open)                         # Chống bẫy quét thanh khoản phiên Mỹ Thứ Hai
@@ -564,8 +576,8 @@ class NostalgiaForInfinityX8_ShortSignals:
         # Setup 7: Bearish Divergence Exhaustion (Phân kỳ đỉnh RSI cạn kiệt đà tăng)
         trigger_bear_div = cond_725 & cond_731
 
-        # Setup 8: Macro 48-Period Donchian Breakdown (Sập gãy vùng hỗ trợ lớn 4 giờ)
-        trigger_macro_breakdown = cond_706 & cond_731
+        # Setup 8: Macro 48-Period Donchian Breakdown có Retest (Không bán đuổi đáy nến xả)
+        trigger_macro_breakdown = cond_706 & cond_731 & retest_confirmed
 
         # Setup 9: BB Upper Rejection Scalp (Chạm dải trên dốc xuống bị từ chối)
         trigger_bb_rejection = cond_723 & cond_731
