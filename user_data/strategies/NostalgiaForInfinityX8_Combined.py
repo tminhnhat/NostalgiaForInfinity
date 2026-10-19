@@ -88,9 +88,11 @@ class NostalgiaForInfinityX8_Combined(NostalgiaForInfinityX8):
         # Additional Short-specific indicators
         df = self.short_strategy.populate_indicators(df, metadata)
 
-        # Memory optimization for 100+ pair backtests on Colab
-        f_cols = df.select_dtypes(include=["float64"]).columns
-        if len(f_cols) > 0:
+        # Memory optimization for 100+ pair backtests on Colab:
+        # Preserve OHLCV columns as float64 to pass Freqtrade sanity check; downcast 240+ indicator columns to float32
+        ohlcv_cols = {"date", "open", "high", "low", "close", "volume"}
+        f_cols = [c for c in df.select_dtypes(include=["float64"]).columns if c not in ohlcv_cols]
+        if f_cols:
             df[f_cols] = df[f_cols].astype(np.float32)
 
         import gc
@@ -138,8 +140,9 @@ class NostalgiaForInfinityX8_Combined(NostalgiaForInfinityX8):
             )
             df.loc[:, "enter_tag"] = merged_tags
 
-        f_cols = df.select_dtypes(include=["float64"]).columns
-        if len(f_cols) > 0:
+        ohlcv_cols = {"date", "open", "high", "low", "close", "volume"}
+        f_cols = [c for c in df.select_dtypes(include=["float64"]).columns if c not in ohlcv_cols]
+        if f_cols:
             df[f_cols] = df[f_cols].astype(np.float32)
 
         import gc
