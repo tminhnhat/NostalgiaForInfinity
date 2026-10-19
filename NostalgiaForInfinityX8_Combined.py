@@ -95,8 +95,23 @@ class NostalgiaForInfinityX8_Combined(NostalgiaForInfinityX8):
         if f_cols:
             df[f_cols] = df[f_cols].astype(np.float32)
 
-        import gc
+        for c in df.select_dtypes(include=["int64", "int32"]).columns:
+            if c not in ohlcv_cols:
+                c_min = df[c].min()
+                c_max = df[c].max()
+                if c_min >= -128 and c_max <= 127:
+                    df[c] = df[c].astype(np.int8)
+                elif c_min >= -32768 and c_max <= 32767:
+                    df[c] = df[c].astype(np.int16)
+                else:
+                    df[c] = df[c].astype(np.int32)
+
+        import gc, ctypes
         gc.collect()
+        try:
+            ctypes.CDLL("libc.so.6").malloc_trim(0)
+        except Exception:
+            pass
 
         return df
 
@@ -145,8 +160,23 @@ class NostalgiaForInfinityX8_Combined(NostalgiaForInfinityX8):
         if f_cols:
             df[f_cols] = df[f_cols].astype(np.float32)
 
-        import gc
+        for c in df.select_dtypes(include=["int64", "int32"]).columns:
+            if c not in ohlcv_cols:
+                c_min = df[c].min()
+                c_max = df[c].max()
+                if c_min >= -128 and c_max <= 127:
+                    df[c] = df[c].astype(np.int8)
+                elif c_min >= -32768 and c_max <= 32767:
+                    df[c] = df[c].astype(np.int16)
+                else:
+                    df[c] = df[c].astype(np.int32)
+
+        import gc, ctypes
         gc.collect()
+        try:
+            ctypes.CDLL("libc.so.6").malloc_trim(0)
+        except Exception:
+            pass
 
         return df
 
