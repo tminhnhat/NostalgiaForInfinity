@@ -106,6 +106,17 @@ class NostalgiaForInfinityX8_Combined(NostalgiaForInfinityX8):
                 else:
                     df[c] = df[c].astype(np.int32)
 
+        # Free non-BTC informative dataframes from DataProvider cache to prevent RAM accumulation
+        if hasattr(self, "dp") and self.dp is not None:
+            if hasattr(self.dp, "_DataProvider__cached_pairs_backtesting"):
+                for k in list(self.dp._DataProvider__cached_pairs_backtesting.keys()):
+                    if "BTC" not in k[0]:
+                        del self.dp._DataProvider__cached_pairs_backtesting[k]
+            if hasattr(self.dp, "_DataProvider__cached_pairs"):
+                for k in list(self.dp._DataProvider__cached_pairs.keys()):
+                    if "BTC" not in k[0]:
+                        del self.dp._DataProvider__cached_pairs[k]
+
         import gc, ctypes
         gc.collect()
         try:
