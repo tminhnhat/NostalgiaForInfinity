@@ -80,6 +80,7 @@ class NostalgiaForInfinityX8_Combined(NostalgiaForInfinityX8):
         """
         1. Run all standard NFIX8 indicator calculations.
         2. Run modular Short indicator calculations.
+        3. Downcast float64 to float32 to reduce memory footprint by 50% for 100+ pair backtests.
         """
         # Base NFIX8 indicators across all timeframes (5m, 15m, 1h, 4h, 1d, BTC)
         df = super().populate_indicators(df, metadata)
@@ -87,7 +88,11 @@ class NostalgiaForInfinityX8_Combined(NostalgiaForInfinityX8):
         # Additional Short-specific indicators
         df = self.short_strategy.populate_indicators(df, metadata)
 
-        df = df.copy()
+        # Memory optimization for 100+ pair backtests on Colab
+        f_cols = df.select_dtypes(include=["float64"]).columns
+        if len(f_cols) > 0:
+            df[f_cols] = df[f_cols].astype(np.float32)
+
         import gc
         gc.collect()
 
@@ -133,7 +138,10 @@ class NostalgiaForInfinityX8_Combined(NostalgiaForInfinityX8):
             )
             df.loc[:, "enter_tag"] = merged_tags
 
-        df = df.copy()
+        f_cols = df.select_dtypes(include=["float64"]).columns
+        if len(f_cols) > 0:
+            df[f_cols] = df[f_cols].astype(np.float32)
+
         import gc
         gc.collect()
 
