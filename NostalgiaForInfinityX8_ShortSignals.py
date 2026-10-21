@@ -59,7 +59,7 @@ class NostalgiaForInfinityX8_ShortSignals:
         self.enable_short_support_breakdown = True     # Tag 701 (Donchian breakdown - rất mạnh)
         self.enable_short_macd_breakdown = True        # Tag 702 (Siết chặt volume + trend + confluence)
         self.enable_short_ema_ribbon = True            # Tag 703 (EMA Ribbon expansion - tốt)
-        self.enable_short_bb_squeeze = True            # Tag 705 (Bollinger Band squeeze breakdown - 100% Winrate)
+        self.enable_short_bb_squeeze = False           # Tag 705 (Tắt vì 5m squeeze có kỳ vọng âm -69.51$)
 
         # Nhóm 3: Scalp Signals
         self.enable_short_relief_rejection = True      # Tag 721 (EMA21 relief rejection - rất tốt)
@@ -265,6 +265,15 @@ class NostalgiaForInfinityX8_ShortSignals:
             rsi_1h_overbought = (rsi_1h > 62.0) & (close > ema_200)
             rsi_1h_oversold = rsi_1h < 30.0
 
+        # NÂNG CẤP TẦNG 1: Macro 1H Trend Guards (Đường xu hướng thể chế 1H EMA 200)
+        close_above_ema200_1h = np.zeros(n_rows, dtype=bool)
+        if "EMA_200_1h" in dataframe.columns:
+            ema_200_1h = dataframe["EMA_200_1h"].to_numpy(copy=False)
+            close_above_ema200_1h = (close > ema_200_1h) & np.isfinite(ema_200_1h) & (ema_200_1h > 0)
+        elif "ema_200_1h" in dataframe.columns:
+            ema_200_1h = dataframe["ema_200_1h"].to_numpy(copy=False)
+            close_above_ema200_1h = (close > ema_200_1h) & np.isfinite(ema_200_1h) & (ema_200_1h > 0)
+
         # Trạng thái siêu sóng tăng đa khung thời gian
         macro_bull_ribbon = (ema_9 > ema_21) & (ema_21 > ema_50) & (ema_50 > ema_200) & (close > ema_200)
 
@@ -389,11 +398,13 @@ class NostalgiaForInfinityX8_ShortSignals:
         cond_702 = (
             (volume > 0)
             & (ema_50 < ema_200)                          # Bắt buộc Downtrend khung lớn
+            & (~close_above_ema200_1h)                    # NÂNG CẤP TẦNG 1: Tuyệt đối không Short khi nến nằm trên 1H EMA 200 (chống bẫy ngược sóng lớn)
             & (macd < 0.0)                                # MACD nằm dưới đường Zero
             & (macdhist < 0.0)                            # Histogram âm
             & (macdhist < shift_macdhist)                 # Gia tốc giảm mạnh dần
             & (close < ema_21) & (close < ema_50)
             & (close < open_px)
+            & (lower_wick_ratio <= 0.40)                  # NÂNG CẤP HƯỚNG 1: Nến xả dứt khoát, loại bỏ bẫy rút chân pinbar (râu dưới > 40%)
             & (vol_spike_ratio >= 1.20)                   # Lực bán đột biến xác nhận
             & (vol_spike_ratio <= 5.0)                    # Loại bỏ volume dị biệt selling climax
             & (rsi_14 > 28.0) & (rsi_14 < 48.0)

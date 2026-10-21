@@ -37,7 +37,7 @@ class NostalgiaForInfinityX8_Combined(NostalgiaForInfinityX8):
 
     def version(self) -> str:
         base_ver = super().version()
-        return f"{base_ver} + CustomShortSignals_v3.6.1_Shield_Triad_Climax23"
+        return f"{base_ver} + CustomShortSignals_v3.6.3_Layer1_Layer2"
 
     def __init__(self, config: dict) -> None:
         super().__init__(config)
@@ -242,12 +242,23 @@ class NostalgiaForInfinityX8_Combined(NostalgiaForInfinityX8):
                 # Retrieve analyzed dataframe for structural awareness (EMA 50 and EMA 200 on 1h)
                 is_1h_golden_cross = False
                 was_gc_at_entry = False
+                ema_200_1h = None
+                ema_50_1h = None
                 if hasattr(self, "dp") and self.dp is not None:
                     df_pair, _ = self.dp.get_analyzed_dataframe(pair, self.timeframe)
                     if len(df_pair) > 0:
-                        last_c = df_pair.iloc[-1]
+                        # Slice up to current_time to avoid future-peeking in backtests while working in live
+                        current_rows = df_pair.loc[df_pair["date"] <= current_time]
+                        last_c = current_rows.iloc[-1] if len(current_rows) > 0 else df_pair.iloc[-1]
+                        
                         ema_50_1h = last_c.get("EMA_50_1h", None)
+                        if ema_50_1h is None:
+                            ema_50_1h = last_c.get("ema_50_1h", None)
+                            
                         ema_200_1h = last_c.get("EMA_200_1h", None)
+                        if ema_200_1h is None:
+                            ema_200_1h = last_c.get("ema_200_1h", None)
+                            
                         if ema_50_1h is not None and ema_200_1h is not None:
                             if not np.isnan(ema_50_1h) and not np.isnan(ema_200_1h):
                                 is_1h_golden_cross = bool(ema_50_1h > ema_200_1h)
@@ -260,14 +271,22 @@ class NostalgiaForInfinityX8_Combined(NostalgiaForInfinityX8):
                             entry_rows = df_pair.loc[df_pair["date"] <= trade.open_date_utc]
                             if len(entry_rows) > 0:
                                 entry_c = entry_rows.iloc[-1]
-                                e_50 = entry_c.get("EMA_50_1h", None)
-                                e_200 = entry_c.get("EMA_200_1h", None)
+                                e_50 = entry_c.get("EMA_50_1h", None) or entry_c.get("ema_50_1h", None)
+                                e_200 = entry_c.get("EMA_200_1h", None) or entry_c.get("ema_200_1h", None)
                                 self._entry_gc_cache[trade_id] = bool(
                                     e_50 is not None and e_200 is not None and not np.isnan(e_50) and not np.isnan(e_200) and e_50 > e_200
                                 )
                             else:
                                 self._entry_gc_cache[trade_id] = False
                         was_gc_at_entry = self._entry_gc_cache[trade_id]
+
+                # NÂNG CẤP TẦNG 2: Emergency Macro Inversion Cut (Thoát hiểm khẩn cấp khi đảo chiều 1H)
+                # Nếu vị thế Short đang âm sâu (<= -50% đòn bẩy = -10% giá) VÀ giá bứt phá vượt lên trên
+                # đường trung bình thể chế 1H EMA 200:
+                # Lập tức thoát lệnh tại mức -50% thay vì gồng chịu chết đến Stop Loss -95%.
+                if current_profit <= -0.50 and ema_200_1h is not None and not np.isnan(ema_200_1h) and ema_200_1h > 0:
+                    if current_rate > ema_200_1h:
+                        return f"exit_short_macro_inversion_cut ( {enter_tag})"
 
                 # Tier 1: Dead-Trade Momentum Failure Cut (24h)
                 # If trade has been open >= 24h, MFE never reached +0.8% leveraged (0.16% price),
