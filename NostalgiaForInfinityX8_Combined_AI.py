@@ -70,7 +70,7 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
 
     def version(self) -> str:
         base_ver = super().version()
-        return f"{base_ver} + AI_Gatekeeper_v3.9_AsymmetricAdaptiveTrailing"
+        return f"{base_ver} + AI_Gatekeeper_v4.0_Target300ROE"
 
     def __init__(self, config: dict) -> None:
         # Tạm thời ẩn các key custom khỏi nfi_parameters để Nostalgia gốc không log warning không cần thiết
@@ -666,7 +666,7 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
         # Khóa lợi nhuận thích ứng theo biên độ MFE, tối ưu hóa các siêu lệnh như MVLL, CHIP, ICNT.
         # (ĐỐI VỚI LONG: Giữ nguyên 100% State Machine của Nostalgia gốc để không làm đứt gãy chu trình De-risk/Grinding).
         # =========================================================================
-        if trade.is_short and current_profit >= 0.12:
+        if trade.is_short and current_profit >= 0.06:
             min_r = trade.min_rate if trade.min_rate is not None else open_rate
             mfe_roe = (open_rate - min_r) / open_rate * leverage
 
@@ -679,6 +679,11 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
             # Khóa bảo vệ tối thiểu +15% ROE (chốt trong biên độ 12% - 15% ROE)
             if mfe_roe >= 0.25 and current_profit >= 0.12 and current_profit <= 0.15:
                 return f"exit_short_adaptive_trailing_mid ( {orig_tag})"
+
+            # Tầng 3: Scalp Short Lock (MFE >= +16% ROE = +3.2% spot 5x)
+            # Khi giá từng giảm tạo MFE >= +16% nhưng tụt về <= +8% ROE: Khóa bảo vệ chắc chắn lợi nhuận
+            if mfe_roe >= 0.16 and current_profit >= 0.06 and current_profit <= 0.08:
+                return f"exit_short_adaptive_trailing_scalp ( {orig_tag})"
 
         # =========================================================================
         # 2. AI SHORT PROTECTION ENGINE
@@ -877,21 +882,44 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
         **kwargs,
     ) -> float:
         """
-        Dynamic Position Sizing: Kết hợp Chiều 1 (Dollar Volatility Equalization) & Chiều 2 (AI Confidence Sizing)
-        - Chiều 1: Nghịch đảo biến động (Inverse ATR%). Cố định Dollar Risk Budget.
+        Dynamic Position Sizing: Kết hợp 3 Trục Quản trị Vốn:
+        - Trục 1: Nghịch đảo biến động (Inverse ATR%). Cố định Dollar Risk Budget.
                    Coin biến động thấp -> Tăng stake lên 120-130$.
                    Coin biến động cực đoan -> Tự động ép stake về 25-35$ để triệt tiêu drawdown.
-        - Chiều 2: Trọng số tin cậy AI (AI Confidence Sizing).
+        - Trục 2: Trọng số tin cậy AI (AI Confidence Sizing).
                    ai_prob >= 0.75 -> Tăng stake 1.20x.
                    ai_prob < 0.60 -> Giảm stake 0.80x.
-        - Dynamic Margin Buffer:
-                   Chỉ cho phép nâng stake lên 130$ nếu số slot đang mở <= 6 (còn dôi dư margin trong ví).
-                   Nếu số slot đang mở > 6: Khóa trần stake <= 100$ để giữ an toàn margin cho DCA/Maintenance.
-        - Asymmetric Sizing Belts:
-                   Khóa trần Short <= 100$ (tránh phóng đại lỗ các lệnh Short bão).
-                   Khóa sàn Long >= 25$ (đảm bảo các lệnh DCA con 10-20% luôn >= 5 USDT, không vi phạm Min Notional Binance).
+        - Trục 3: Conservative Dynamic Equity Compounding (Tái Đầu Tư Lợi Nhuận Tuyến Tính Thận Trọng).
+                   Khi tích lũy lợi nhuận > 200 USDT (qua ngưỡng an toàn), stake cơ bản scale nhẹ nhàng theo đà tăng trưởng ví:
+                   comp_mult = 1.0 + 0.18 * ((cur_profit - 200) / 1000), khống chế trần an toàn <= 1.35x.
+                   Giai đoạn đầu (vốn <= 1200$) giữ nguyên 100$ để bảo vệ tuyệt đối Drawdown ngày 01/07.
+        - Dynamic Margin Buffer & Tiered Sizing Belts:
+                   Long: Trần 130$ * comp_mult khi open_trades <= 6; trần 100$ * comp_mult khi open_trades > 6.
+                   Short Tier 1 (100% WR: 706, 724, 721): Trần 130$ * comp_mult khi open_trades <= 6.
+                   Short Tier 2 (88.9% WR: 702 703 731): Trần 115$ * comp_mult khi open_trades <= 6.
+                   Short Tier 3 (Tag 562 bão): Khóa cứng trần <= 100$ (tuyệt đối không scale comp_mult) để chặn bão rủi ro.
         """
-        base_stake = proposed_stake if proposed_stake and proposed_stake > 0 else 100.0
+        # 1. Trục 3: Conservative Dynamic Equity Compounding
+        comp_mult = 1.0
+        cur_profit = 0.0
+        if Trade and hasattr(Trade, "bt_total_profit"):
+            cur_profit = float(Trade.bt_total_profit)
+        elif hasattr(self, "wallets") and self.wallets is not None:
+            try:
+                stake_curr = self.config.get("stake_currency", "USDT")
+                w_tot = self.wallets.get_total(stake_curr)
+                if w_tot and w_tot > 1000.0:
+                    cur_profit = float(w_tot) - 1000.0
+            except Exception:
+                pass
+
+        if cur_profit > 200.0:
+            growth_surplus = (cur_profit - 200.0) / 1000.0
+            comp_mult = 1.0 + 0.20 * growth_surplus
+            comp_mult = float(np.clip(comp_mult, 1.0, 1.40))
+
+        raw_proposed = proposed_stake if proposed_stake and proposed_stake > 0 else 100.0
+        base_stake = raw_proposed * comp_mult
         vol_mult = 1.0
         ai_mult = 1.0
 
@@ -902,14 +930,14 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
                 if len(current_rows) > 0:
                     last_c = current_rows.iloc[-1]
 
-                    # 1. Chiều 1: Inverse ATR Sizing (Benchmark ATR% = 1.2% / nến 5m)
+                    # 2. Trục 1: Inverse ATR Sizing (Benchmark ATR% = 1.2% / nến 5m)
                     val_atr = last_c.get("ai_feat_atr_norm", None)
                     if val_atr is not None and not np.isnan(val_atr) and val_atr > 0:
                         atr_norm = float(val_atr)
                         vol_mult = 0.012 / atr_norm
                         vol_mult = float(np.clip(vol_mult, 0.25, 1.30))
 
-                    # 2. Chiều 2: AI Confidence Sizing (áp dụng khi có ai_short_prob)
+                    # 3. Trục 2: AI Confidence Sizing (áp dụng khi có ai_short_prob)
                     val_prob = last_c.get("ai_short_prob", None)
                     if val_prob is not None and not np.isnan(val_prob) and val_prob > 0:
                         p = float(val_prob)
@@ -920,33 +948,30 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
 
         target_stake = base_stake * vol_mult * ai_mult
 
-        # 3. Dynamic Margin Buffer & Tiered Sizing Belts:
+        # 4. Dynamic Margin Buffer & Tiered Sizing Belts:
         open_trades_count = len(Trade.get_open_trades()) if Trade else 0
 
-        # Mặc định cho Long: Nâng stake lên 130$ nếu slot <= 6, ngược lại giữ <= 100$
-        max_allowed_stake = 130.0 if open_trades_count <= 6 else 100.0
+        # Mặc định cho Long: Nâng stake lên 130$ * comp_mult nếu slot <= 6, ngược lại giữ <= 100$ * comp_mult
+        max_allowed_stake = (130.0 * comp_mult) if open_trades_count <= 6 else (100.0 * comp_mult)
 
         # Phân tầng trần cho vị thế Short (Tiered Short Sizing):
         if side in ("short", "sell"):
             etag = str(entry_tag or "")
 
             # Tầng 1: Elite High-WR Short Tags (100% Win Rate thực chứng: 706, 724, 721)
-            # Dữ liệu thực chứng 187 ngày: 8 lệnh Thắng / 0 lệnh Thua
-            # -> Cho phép nâng stake lên đến 130$ khi slot <= 6 để tối đa hóa lợi nhuận mà không tăng rủi ro
             tier1_elite_tags = ("706", "724", "721")
             is_tier1 = any(t in etag for t in tier1_elite_tags) and ("_AI_PASS" in etag or "AI_PASS" in etag)
 
             # Tầng 2: Standard AI Short Tags (Win Rate thực chứng 75% - 89%: 702 703 731, 701 702 703 731)
-            # Nới nhẹ trần lên 115$ khi slot <= 6 (vừa mở rộng biên lãi của 11 lệnh thắng, vừa khống chế mức tăng lỗ nếu có)
             tier2_ai_tags = ("702 703 731", "701 702 703 731")
             is_tier2 = any(t in etag for t in tier2_ai_tags) and ("_AI_PASS" in etag or "AI_PASS" in etag)
 
             if is_tier1 and open_trades_count <= 6:
-                max_allowed_stake = 130.0
+                max_allowed_stake = 130.0 * comp_mult
             elif is_tier2 and open_trades_count <= 6:
-                max_allowed_stake = 115.0
+                max_allowed_stake = 115.0 * comp_mult
             else:
-                # Tầng 3: Tag 562 gốc (nguồn gốc các ca bão JTO, PUMP, ZEC, RENDER) và các tag chưa xác thực -> Khóa chặt trần <= 100$
+                # Tầng 3: Tag 562 gốc (nguồn gốc các ca bão JTO, PUMP, ZEC, RENDER) -> KHÓA CỨNG 100$ TUYỆT ĐỐI không scale
                 max_allowed_stake = 100.0
 
         # Khóa sàn Long >= 25$ (đảm bảo các lệnh nhồi con 10-20% luôn >= 5 USDT)
