@@ -1,0 +1,49 @@
+{
+  // =========================================================================
+  // VÍ DỤ CẤU HÌNH BẬT / TẮT TAG VÀ TÍN HIỆU SHORT CUSTOM QUA FILE CONFIG
+  // Chuẩn thiết kế tương đồng 100% với nfi_parameters của NostalgiaForInfinityX8 gốc.
+  // =========================================================================
+
+  "nfi_parameters": {
+    // -----------------------------------------------------------------------
+    // CÁCH 1: Bật/Tắt theo từng tổ hợp Tag cụ thể (Khuyên dùng để tối ưu hiệu năng)
+    // -----------------------------------------------------------------------
+    // Danh sách các tổ hợp Tag Short muốn loại bỏ (vô hiệu hóa):
+    "disabled_custom_short_tags": [
+      "701 703 731", // Donchian breakdown thiếu MACD (Bẫy bear trap)
+      "703 722 731", // StochRSI cross-down 5m nhiễu cao khi sideway
+      "724 731"      // EMA 50 rejection đơn lẻ thiếu EMA ribbon / MACD
+    ],
+
+    // Hoặc có thể khai báo dạng key-value (true: bật, false: tắt):
+    "custom_short_tag_params": {
+      "701 703 731": false,
+      "703 722 731": false,
+      "724 731": false,
+      "702 703 731": true,
+      "701 702 703 731": true
+    },
+
+    // -----------------------------------------------------------------------
+    // CÁCH 2: Bật/Tắt theo từng mã điều kiện tín hiệu đơn lẻ
+    // (Tương tự short_entry_signal_params của Nostalgia gốc)
+    // -----------------------------------------------------------------------
+    "custom_short_signal_params": {
+      "custom_short_701_enable": true,  // Donchian Breakdown
+      "custom_short_702_enable": true,  // MACD Death Cross / Momentum Rejection
+      "custom_short_703_enable": true,  // EMA Ribbon Expansion (EMA 21 < 50 < 200)
+      "custom_short_705_enable": false, // BB Squeeze Breakdown
+      "custom_short_706_enable": true,  // Donchian Macro 48 Breakdown có Retest
+      "custom_short_711_enable": true,  // SFP Sweep Fakeout
+      "custom_short_712_enable": true,  // Multi-Timeframe BB Overbought Rejection
+      "custom_short_713_enable": true,  // Volume Climax Buying Exhaustion
+      "custom_short_714_enable": false, // Bearish Divergence (5m nhiễu cao)
+      "custom_short_721_enable": true,  // Relief Bounce Rejection tại EMA 21
+      "custom_short_722_enable": true,  // StochRSI Overbought Cross-down
+      "custom_short_723_enable": true,  // Upper Bollinger Band Rejection
+      "custom_short_724_enable": true,  // EMA 50 Relief Bounce Rejection
+      "custom_short_725_enable": false, // RSI Bearish Divergence
+      "custom_short_731_enable": true   // BTC Momentum Breakdown Spillover
+    }
+  }
+}

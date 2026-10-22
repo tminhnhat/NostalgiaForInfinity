@@ -16,7 +16,9 @@ import pandas as pd
 from pandas import DataFrame
 import talib.abstract as ta
 
+from NostalgiaForInfinityX8 import NostalgiaForInfinityX8
 from NostalgiaForInfinityX8_Combined import NostalgiaForInfinityX8_Combined
+from freqtrade.persistence import Trade
 
 log = logging.getLogger(__name__)
 
@@ -39,15 +41,55 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
     # Cấu hình AI Gatekeeper
     ai_gatekeeper_enabled: bool = True
     ai_confidence_threshold: float = 0.55
-    ai_model_path: str = "user_data/models/nfix8_short_ai_v2.pkl"
-    ai_fallback_model_path: str = "user_data/models/nfix8_short_ai_v1.pkl"
+    ai_model_path: str = "user_data/models/nfix8_short_ai_v3.pkl"
+    ai_fallback_model_path: str = "user_data/models/nfix8_short_ai_v2.pkl"
+
+    # Danh sách các tag custom Short bị loại bỏ.
+    # Mặc định rỗng (Rollback - Không hardcode bất kỳ tag nào).
+    # Có thể bật/tắt tự do qua file cấu hình (config.json) tương tự cách làm của Nostalgia gốc.
+    disabled_custom_short_tags: set = set()
+
+    # Toggles cho từng điều kiện Short custom (tương tự short_entry_signal_params của Nostalgia gốc)
+    custom_short_signal_params: dict = {
+        "custom_short_701_enable": True,
+        "custom_short_702_enable": True,
+        "custom_short_703_enable": True,
+        "custom_short_705_enable": False,
+        "custom_short_706_enable": True,
+        "custom_short_711_enable": True,
+        "custom_short_712_enable": True,
+        "custom_short_713_enable": True,
+        "custom_short_714_enable": False,
+        "custom_short_721_enable": True,
+        "custom_short_722_enable": True,
+        "custom_short_723_enable": True,
+        "custom_short_724_enable": True,
+        "custom_short_725_enable": False,
+        "custom_short_731_enable": True,
+    }
 
     def version(self) -> str:
         base_ver = super().version()
-        return f"{base_ver} + AI_Gatekeeper_v2.0_MTF_DualTag"
+        return f"{base_ver} + AI_Gatekeeper_v3.5_SmartDCA"
 
     def __init__(self, config: dict) -> None:
+        # Tạm thời ẩn các key custom khỏi nfi_parameters để Nostalgia gốc không log warning không cần thiết
+        nfi_params = config.get("nfi_parameters", {}) if isinstance(config, dict) else {}
+        custom_keys = ["disabled_custom_short_tags", "custom_short_tag_params", "custom_short_signal_params"]
+        popped = {}
+        if isinstance(nfi_params, dict):
+            for k in custom_keys:
+                if k in nfi_params:
+                    popped[k] = nfi_params.pop(k)
+
         super().__init__(config)
+
+        # Khôi phục lại nfi_parameters
+        if isinstance(nfi_params, dict) and popped:
+            nfi_params.update(popped)
+
+        # Cập nhật cấu hình bật/tắt tag từ config file (tương tự Nostalgia gốc)
+        self.update_custom_signals_from_config(self.config)
 
         # Danh sách tag phê duyệt AI cần đăng ký vào NFIX8 subsystems
         # để order tracking, position sizing và exit engines nhận diện trơn tru
@@ -81,6 +123,103 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
             "ENABLED" if self.ai_gatekeeper_enabled else "DISABLED",
             self.ai_confidence_threshold,
         )
+
+    def update_signals_from_config(self, config: dict) -> None:
+        """
+        Kế thừa và mở rộng cơ chế update_signals_from_config của Nostalgia gốc:
+        Cập nhật tín hiệu Long & Short gốc (562,...), sau đó cập nhật Short Custom.
+        """
+        super().update_signals_from_config(config)
+        self.update_custom_signals_from_config(self.config)
+
+    def update_custom_signals_from_config(self, cfg: dict) -> None:
+        """
+        Cập nhật trạng thái bật/tắt của các tag Short Custom từ file config (JSON),
+        hoàn toàn tương đồng với cơ chế update_signals_from_config của Nostalgia gốc.
+        Hỗ trợ cấu hình ở cả 2 vị trí:
+        1. Bên trong block 'nfi_parameters':
+           {
+               "custom_short_signal_params": { "custom_short_701_enable": false, ... },
+               "disabled_custom_short_tags": ["701 703 731", "703 722 731", "724 731"],
+               "custom_short_tag_params": { "701 703 731": false, ... }
+           }
+        2. Hoặc trực tiếp ở root của file config:
+           {
+               "disabled_custom_short_tags": ["701 703 731", ...],
+               "custom_short_signal_params": { ... }
+           }
+        """
+        if not isinstance(cfg, dict):
+            return
+
+        nfi_params = cfg.get("nfi_parameters", {})
+        if not isinstance(nfi_params, dict):
+            nfi_params = {}
+
+        # 1. Cập nhật custom_short_signal_params (từng signal con 701, 702, ...)
+        config_signals = {}
+        if "custom_short_signal_params" in nfi_params and isinstance(nfi_params["custom_short_signal_params"], dict):
+            config_signals.update(nfi_params["custom_short_signal_params"])
+        if "custom_short_signal_params" in cfg and isinstance(cfg["custom_short_signal_params"], dict):
+            config_signals.update(cfg["custom_short_signal_params"])
+
+        for k, v in config_signals.items():
+            if k in self.custom_short_signal_params:
+                self.custom_short_signal_params[k] = bool(v)
+                log.info("Custom short signal param '%s' updated from config to %s", k, v)
+
+        # Đồng bộ sang short_strategy (NostalgiaForInfinityX8_ShortSignals)
+        signal_map = {
+            "custom_short_701_enable": "enable_short_support_breakdown",
+            "custom_short_702_enable": "enable_short_macd_breakdown",
+            "custom_short_703_enable": "enable_short_ema_ribbon",
+            "custom_short_705_enable": "enable_short_bb_squeeze",
+            "custom_short_711_enable": "enable_short_sfp",
+            "custom_short_712_enable": "enable_short_exhaustion_top",
+            "custom_short_713_enable": "enable_short_volume_climax",
+            "custom_short_714_enable": "enable_short_bearish_divergence",
+            "custom_short_721_enable": "enable_short_relief_rejection",
+            "custom_short_722_enable": "enable_short_stochrsi_cross",
+            "custom_short_723_enable": "enable_short_bb_scalp",
+            "custom_short_731_enable": "enable_short_btc_spillover",
+        }
+        # Đồng bộ sang short_strategy (NostalgiaForInfinityX8_ShortSignals) nếu đã được khởi tạo
+        if hasattr(self, "short_strategy") and self.short_strategy is not None:
+            for param_key, attr_name in signal_map.items():
+                if param_key in self.custom_short_signal_params and hasattr(self.short_strategy, attr_name):
+                    setattr(self.short_strategy, attr_name, self.custom_short_signal_params[param_key])
+
+        # 2. Cập nhật danh sách disabled_custom_short_tags (hoặc custom_short_tag_params)
+        # Mặc định rỗng (Rollback - tất cả tag được bật nếu không có config chỉ định tắt)
+        self.disabled_custom_short_tags = set()
+
+        dis_list = []
+        if "disabled_custom_short_tags" in nfi_params and isinstance(nfi_params["disabled_custom_short_tags"], (list, set)):
+            dis_list.extend(nfi_params["disabled_custom_short_tags"])
+        if "custom_short_tag_params" in nfi_params and isinstance(nfi_params["custom_short_tag_params"], dict):
+            for tag, enabled in nfi_params["custom_short_tag_params"].items():
+                if not enabled:
+                    dis_list.append(tag)
+
+        if "disabled_custom_short_tags" in cfg and isinstance(cfg["disabled_custom_short_tags"], (list, set)):
+            dis_list.extend(cfg["disabled_custom_short_tags"])
+        if "custom_short_tag_params" in cfg and isinstance(cfg["custom_short_tag_params"], dict):
+            for tag, enabled in cfg["custom_short_tag_params"].items():
+                if not enabled:
+                    dis_list.append(tag)
+
+        for tag in dis_list:
+            norm_tag = " ".join(sorted(str(tag).strip().split()))
+            self.disabled_custom_short_tags.add(norm_tag)
+
+        if self.disabled_custom_short_tags:
+            log.info(
+                "Configured %d disabled custom short tags from config: %s",
+                len(self.disabled_custom_short_tags),
+                sorted(list(self.disabled_custom_short_tags)),
+            )
+        else:
+            log.info("No custom short tags disabled via config. All custom short tags active (Rollback mode).")
 
     def _load_ai_model(self) -> None:
         """Nạp model học máy từ đĩa (Pickle / Joblib / ONNX)."""
@@ -327,63 +466,317 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
         probs[cand_indices] = score
         return probs
 
+    def _compute_market_regime_thresholds(self, df: DataFrame, indices: np.ndarray) -> np.ndarray:
+        """
+        ĐỀ XUẤT 4: Market Regime Conditioning (Phân loại 4 pha thị trường vĩ mô BTC)
+        Tự động co giãn ngưỡng duyệt Short:
+        - STRONG_BULL (BTC Uptrend mạnh): Ngưỡng 0.68 (Siêu phòng thủ, chặn short ngược sóng)
+        - BEAR_PANIC (BTC Downtrend / xả mạnh): Ngưỡng 0.48 (Tấn công thuận xu hướng, bắt trọn đà rơi)
+        - SIDEWAY_CHOP (BTC tích lũy / đi ngang): Ngưỡng 0.60 (Lọc nhiễu, chống bear trap)
+        - CORRECTION_RECOVERY (Điều chỉnh bình thường): Ngưỡng 0.55 (Cân bằng)
+        """
+        n_cand = len(indices)
+        thresholds = np.full(n_cand, self.ai_confidence_threshold, dtype=np.float32)
+
+        btc_d4_col = "ai_feat_btc_dist_ema200_4h"
+        btc_d1_col = "ai_feat_btc_dist_ema200_1h"
+        if btc_d4_col not in df.columns or btc_d1_col not in df.columns:
+            return thresholds
+
+        btc_d4 = df.loc[indices, btc_d4_col].to_numpy()
+        btc_d1 = df.loc[indices, btc_d1_col].to_numpy()
+        btc_rsi = df.loc[indices, "ai_feat_btc_rsi_1h"].to_numpy() if "ai_feat_btc_rsi_1h" in df.columns else np.full(n_cand, 50.0)
+
+        # 1. STRONG_BULL: BTC trên EMA 200 4h, trên EMA 200 1h > 1%, RSI >= 55.0
+        is_strong_bull = (btc_d4 > 0.0) & (btc_d1 > 0.01) & (btc_rsi >= 55.0)
+
+        # 2. BEAR_PANIC: BTC dưới EMA 200 4h, dưới EMA 200 1h < -1%, RSI <= 45.0
+        is_bear_panic = (btc_d4 < 0.0) & (btc_d1 < -0.01) & (btc_rsi <= 45.0)
+
+        # 3. SIDEWAY_CHOP: BTC dao động hẹp quanh EMA 200 1h (|dist| <= 1%) và RSI vùng 45-55
+        is_chop = (np.abs(btc_d1) <= 0.01) & (btc_rsi >= 45.0) & (btc_rsi <= 55.0)
+
+        thresholds = np.where(is_strong_bull, 0.68, thresholds)
+        thresholds = np.where(is_bear_panic, 0.48, thresholds)
+        thresholds = np.where(is_chop, 0.60, thresholds)
+
+        return thresholds
+
     def populate_entry_trend(self, df: DataFrame, metadata: dict) -> DataFrame:
         """
-        1. Gọi populate_entry_trend của bản chuẩn (đầy đủ Long/Short NFI và Custom Shorts).
-        2. Nếu ai_gatekeeper_enabled:
-           - Duyệt qua tất cả các cây nến có tín hiệu enter_short == 1.
-           - Tính toán AI Confidence Score.
-           - Nếu Score >= ai_confidence_threshold:
-               * GIỮ LỆNH enter_short = 1
-               * ĐỔI TAG: enter_tag = enter_tag + "_AI_PASS" (Dual-Tagging)
-           - Nếu Score < ai_confidence_threshold:
-               * VETO (HỦY LỆNH): enter_short = 0
-               * Ghi nhận audit log lệnh bị chặn.
+        Quy trình tạo tín hiệu vào lệnh chuẩn hóa:
+        1. Kế thừa 100% tín hiệu Long & Short gốc của NostalgiaForInfinityX8 (Tuyệt đối không can thiệp).
+        2. Kích hoạt các tín hiệu Short custom mới từ short_strategy (Nhóm 701-731).
+        3. AI Gatekeeper CHỈ kiểm soát các tín hiệu Short custom:
+           - Áp dụng Đề Xuất 4: Phân loại Market Regime để co giãn ngưỡng động [0.48 - 0.68].
+           - Nếu ai_short_prob >= dynamic_threshold: Phê duyệt và gắn nhãn _AI_PASS vào tag custom.
+           - Nếu ai_short_prob < dynamic_threshold: VETO (hủy tín hiệu custom, enter_short_custom = 0).
+        4. KHÔNG can thiệp, không lọc và không đổi tag của các tín hiệu thuộc Nostalgia gốc (như 562).
+        5. Gộp các tín hiệu an toàn vào DataFrame theo chuẩn Combined.
         """
-        df = super().populate_entry_trend(df, metadata)
+        # 1. Chạy tín hiệu Nostalgia gốc (Tất cả Long & Short gốc như 562)
+        df = NostalgiaForInfinityX8.populate_entry_trend(self, df, metadata)
 
-        if not self.ai_gatekeeper_enabled:
-            return df
+        # 2. Chạy tín hiệu Short custom của module Combined
+        df = self.short_strategy.populate_entry_trend(df, metadata)
 
-        if "ai_short_prob" not in df.columns:
-            df["ai_short_prob"] = np.zeros(len(df), dtype=np.float32)
+        # 3. AI Gatekeeper CHỈ thẩm định và kiểm soát tín hiệu Short Custom
+        if self.ai_gatekeeper_enabled and "enter_short_custom" in df.columns:
+            custom_mask = (df["enter_short_custom"] == 1).to_numpy()
+            if np.any(custom_mask):
+                # 3.0. Surgical Tag Pruning: Loại bỏ các tổ hợp tag custom có kỳ vọng âm
+                if hasattr(self, "disabled_custom_short_tags") and self.disabled_custom_short_tags:
+                    c_tags_raw = df["enter_tag_custom"].fillna("").astype(str).to_numpy()
+                    cand_idxs = np.where(custom_mask)[0]
+                    prune_mask = np.zeros(len(df), dtype=bool)
+                    for idx in cand_idxs:
+                        norm_tag = " ".join(sorted(c_tags_raw[idx].strip().split()))
+                        if norm_tag in self.disabled_custom_short_tags:
+                            prune_mask[idx] = True
 
-        short_cand_mask = (df["enter_short"] == 1).to_numpy()
-        if not np.any(short_cand_mask):
-            return df
+                    if np.any(prune_mask):
+                        df.loc[prune_mask, "enter_short_custom"] = 0
+                        df.loc[prune_mask, "enter_tag_custom"] = ""
+                        custom_mask = (df["enter_short_custom"] == 1).to_numpy()
 
-        # Tính toán xác suất AI
-        ai_probs = self._compute_ai_probability(df, short_cand_mask)
-        df["ai_short_prob"] = ai_probs
+                # 3.0.1. ĐỀ XUẤT 3: Thắt chặt xác nhận Đa Khung Thời Gian cho Tag 722 (StochRSI 5m Confirmation)
+                # Tín hiệu StochRSI 5m cross-down rất dễ bị trôi dạt (drift 36h) nếu khung 1h của coin đang có lực hồi.
+                # Chỉ cho phép Short 722 khi RSI 1h của cặp coin đồng thuận suy yếu (RSI 1h < 50.0).
+                if np.any(custom_mask) and "ai_feat_pair_rsi_1h" in df.columns:
+                    c_tags_series = df["enter_tag_custom"].fillna("").astype(str)
+                    has_722 = custom_mask & c_tags_series.str.contains("722", regex=False).to_numpy()
+                    rsi_1h_strong = (df["ai_feat_pair_rsi_1h"] >= 50.0).to_numpy()
+                    invalid_722 = has_722 & rsi_1h_strong
+                    if np.any(invalid_722):
+                        df.loc[invalid_722, "enter_short_custom"] = 0
+                        df.loc[invalid_722, "enter_tag_custom"] = ""
+                        custom_mask = (df["enter_short_custom"] == 1).to_numpy()
 
-        approved_mask = short_cand_mask & (ai_probs >= self.ai_confidence_threshold)
-        vetoed_mask = short_cand_mask & (ai_probs < self.ai_confidence_threshold)
+                if np.any(custom_mask):
+                    # Tính toán xác suất AI CHỈ trên các cây nến có tín hiệu custom còn lại
+                    ai_probs = self._compute_ai_probability(df, custom_mask)
+                    if "ai_short_prob" not in df.columns:
+                        df["ai_short_prob"] = np.zeros(len(df), dtype=np.float32)
+                    df.loc[custom_mask, "ai_short_prob"] = ai_probs[custom_mask]
 
-        # 1. HỦY LỆNH BỊ VETO (Bảo vệ 10 slot danh mục)
-        if np.any(vetoed_mask):
-            df.loc[vetoed_mask, "enter_short"] = 0
-            # Ghi nhận các lệnh bị Veto để kiểm toán Alpha
-            pair = metadata.get("pair", "UNKNOWN")
-            dates = df.loc[vetoed_mask, "date"].to_numpy()
-            v_probs = ai_probs[vetoed_mask]
-            v_tags = df.loc[vetoed_mask, "enter_tag"].fillna("").astype(str).to_numpy()
-            for d, p, t in zip(dates, v_probs, v_tags):
-                self.veto_audit_records.append({
-                    "date": str(d),
-                    "pair": pair,
-                    "tag": t,
-                    "ai_prob": float(p),
-                    "status": "VETOED"
-                })
+                    # ĐỀ XUẤT 4: Co giãn ngưỡng động theo Chế độ Thị trường (Market Regime)
+                    cand_idxs_valid = np.where(custom_mask)[0]
+                    regime_th = self._compute_market_regime_thresholds(df, cand_idxs_valid)
+                    req_thresholds = np.full(len(df), self.ai_confidence_threshold, dtype=np.float32)
+                    req_thresholds[cand_idxs_valid] = regime_th
 
-        # 2. DUAL-TAGGING: Gắn hậu tố '_AI_PASS' cho các lệnh được duyệt
-        if np.any(approved_mask):
-            tags = df["enter_tag"].fillna("").astype(str).to_numpy()
-            new_tags = np.where(
-                approved_mask,
-                np.where(tags != "", tags + "_AI_PASS", "AI_PASS"),
-                tags,
+                    approved_custom = custom_mask & (ai_probs >= req_thresholds)
+                    vetoed_custom = custom_mask & (ai_probs < req_thresholds)
+
+                    # VETO tín hiệu custom không đạt chuẩn
+                    if np.any(vetoed_custom):
+                        df.loc[vetoed_custom, "enter_short_custom"] = 0
+                        # Ghi nhận audit log cho tín hiệu custom bị chặn
+                        pair = metadata.get("pair", "UNKNOWN")
+                        dates = df.loc[vetoed_custom, "date"].to_numpy()
+                        v_probs = ai_probs[vetoed_custom]
+                        v_req = req_thresholds[vetoed_custom]
+                        v_tags = df.loc[vetoed_custom, "enter_tag_custom"].fillna("").astype(str).to_numpy()
+                        for d, p, rth, t in zip(dates, v_probs, v_req, v_tags):
+                            self.veto_audit_records.append({
+                                "date": str(d),
+                                "pair": pair,
+                                "tag": t,
+                                "ai_prob": float(p),
+                                "required_th": float(rth),
+                                "status": "VETOED_CUSTOM"
+                            })
+
+                    # Gắn hậu tố _AI_PASS CHỈ cho các tag custom được duyệt
+                    if np.any(approved_custom):
+                        c_tags = df["enter_tag_custom"].fillna("").astype(str).to_numpy()
+                        df.loc[:, "enter_tag_custom"] = np.where(
+                            approved_custom,
+                            c_tags + "_AI_PASS",
+                            c_tags,
+                        )
+
+        # 4. Hợp nhất Short Entry signals theo chuẩn Combined:
+        # - Lệnh Short gốc của Nostalgia (562) được giữ nguyên vẹn 100% không bị ô nhiễm tag
+        # - Lệnh Short custom được AI phê duyệt được hợp nhất vào
+        if "enter_short_custom" in df.columns:
+            custom_short_trigger = df["enter_short_custom"] == 1
+            has_long = (df["enter_long"] == 1) if "enter_long" in df.columns else False
+            safe_short_trigger = custom_short_trigger & (~has_long)
+
+            # Kích hoạt enter_short flag nếu có custom short an toàn
+            df.loc[safe_short_trigger, "enter_short"] = 1
+
+            # Hợp nhất enter_tag: tag gốc Nostalgia (như 562) giữ nguyên, nối thêm tag custom đã duyệt
+            existing_tags = df["enter_tag"].fillna("").astype(str).to_numpy()
+            custom_tags = df["enter_tag_custom"].fillna("").astype(str).to_numpy()
+
+            merged_tags = np.where(
+                safe_short_trigger,
+                np.where(
+                    existing_tags != "",
+                    existing_tags + " " + custom_tags,
+                    custom_tags,
+                ),
+                existing_tags,
             )
-            df.loc[:, "enter_tag"] = new_tags
+            df.loc[:, "enter_tag"] = merged_tags
+
+        ohlcv_cols = {"date", "open", "high", "low", "close", "volume"}
+        f_cols = [c for c in df.select_dtypes(include=["float64"]).columns if c not in ohlcv_cols]
+        if f_cols:
+            df[f_cols] = df[f_cols].astype(np.float32)
+
+        for c in df.select_dtypes(include=["int64", "int32"]).columns:
+            if c not in ohlcv_cols:
+                c_min = df[c].min()
+                c_max = df[c].max()
+                if c_min >= -128 and c_max <= 127:
+                    df[c] = df[c].astype(np.int8)
+                elif c_min >= -32768 and c_max <= 32767:
+                    df[c] = df[c].astype(np.int16)
+                else:
+                    df[c] = df[c].astype(np.int32)
 
         return df
+
+    def custom_exit(
+        self,
+        pair: str,
+        trade: "Trade",
+        current_time: "datetime",
+        current_rate: float,
+        current_profit: float,
+        **kwargs,
+    ) -> Optional[str]:
+        """
+        ĐỀ XUẤT 5: AI Dynamic Exit & Profit Protection Engine
+        1. AI Trailing Profit Lock: Chống cho lại thị trường khi đã từng lãi lớn (MFE >= +8% ROE)
+        2. AI Dynamic Reversal Harvest: Chốt lời sớm khi nến 5m kiệt sức bán / rút chân pinbar
+        3. AI Time-Decay & Drift Soft Exit: Thoát các lệnh short trôi dạt quá 36h không sinh lời
+        4. Chuyển tiếp an toàn vào pipeline Combined & Nostalgia gốc
+        """
+        orig_tag = getattr(trade, "enter_tag", "") or ""
+        is_ai_short = trade.is_short and ("_AI_PASS" in orig_tag or any(t in orig_tag for t in self.short_strategy.custom_short_tags))
+
+        if is_ai_short:
+            leverage = trade.leverage or 5.0
+            open_rate = trade.open_rate
+            min_r = trade.min_rate if trade.min_rate is not None else open_rate
+            mfe_lev = (open_rate - min_r) / open_rate * leverage
+            trade_duration_hours = (current_time - trade.open_date_utc).total_seconds() / 3600.0
+
+            # 0. AI STRUCTURAL EARLY INVALIDATION CUT (ĐỀ XUẤT 2):
+            # Nếu vị thế Short Custom đang âm (current_profit <= -0.20, tức -20% ROE = -4% spot)
+            # VÀ giá coin đã bứt phá đóng nến vượt lên trên đường thể chế 1H EMA 200:
+            # Cấu trúc Downtrend đã bị gãy hoàn toàn.
+            # Lập tức thoát hiểm khẩn cấp tại -20% ROE, ngăn chặn việc gồng lệnh chịu lỗ đến -50% hay -95%!
+            if current_profit <= -0.20 and hasattr(self, "dp") and self.dp is not None:
+                df_pair, _ = self.dp.get_analyzed_dataframe(pair, self.timeframe)
+                if len(df_pair) > 0:
+                    current_rows = df_pair.loc[df_pair["date"] <= current_time]
+                    if len(current_rows) > 0:
+                        last_c = current_rows.iloc[-1]
+                        e200_1h = last_c.get("EMA_200_1h", None) or last_c.get("ema_200_1h", None)
+                        if e200_1h is not None and not np.isnan(e200_1h) and e200_1h > 0:
+                            if current_rate > e200_1h:
+                                return f"exit_ai_early_macro_cut ( {orig_tag})"
+
+            # 1. AI Trailing Profit Lock:
+            # Nếu vị thế đã từng đạt MFE >= +8.0% đòn bẩy (+1.6% spot) nhưng hiện tại tụt về <= +1.0% đòn bẩy:
+            # Khóa lợi nhuận an toàn, không để lệnh từ lãi chuyển thành lỗ!
+            if mfe_lev >= 0.080 and current_profit <= 0.010:
+                return f"exit_ai_profit_lock ( {orig_tag})"
+
+            # 2. AI Dynamic Reversal Harvest:
+            # Nếu lệnh đang lãi tốt (current_profit >= +6.0% đòn bẩy, tức +1.2% spot)
+            # VÀ nến 5m xuất hiện lực đỡ rút chân pinbar mạnh (râu dưới >= 35%) hoặc RSI quá bán đảo chiều:
+            # Chốt lời chủ động ngay vùng đáy nến để tối ưu hóa lợi nhuận thực tế!
+            if current_profit >= 0.060 and hasattr(self, "dp") and self.dp is not None:
+                df_pair, _ = self.dp.get_analyzed_dataframe(pair, self.timeframe)
+                if len(df_pair) > 0:
+                    current_rows = df_pair.loc[df_pair["date"] <= current_time]
+                    if len(current_rows) > 0:
+                        last_c = current_rows.iloc[-1]
+                        l_wick = last_c.get("ai_feat_lower_wick", 0.0)
+                        rsi = last_c.get("rsi_14", 50.0)
+                        if l_wick >= 0.35 and rsi > 30.0:
+                            return f"exit_ai_reversal_harvest ( {orig_tag})"
+
+            # 3. AI TIME-DECAY & DRIFT SOFT EXIT:
+            # Lệnh short giữ quá 36h mà không thể bứt phá (lợi nhuận <= +0.4% đòn bẩy):
+            # Thoát vị thế trôi dạt để giải phóng margin và bảo vệ tài khoản:
+            if trade_duration_hours >= 36.0 and current_profit <= 0.004:
+                return f"exit_ai_drift_decay ( {orig_tag})"
+
+        # Chuyển tiếp vào pipeline custom_exit của Combined & Nostalgia gốc
+        if orig_tag and "_AI_PASS" in orig_tag:
+            trade.enter_tag = orig_tag.replace("_AI_PASS", "").strip()
+
+        res = super().custom_exit(
+            pair=pair,
+            trade=trade,
+            current_time=current_time,
+            current_rate=current_rate,
+            current_profit=current_profit,
+            **kwargs,
+        )
+        trade.enter_tag = orig_tag
+        return res
+
+    def adjust_trade_position(
+        self,
+        trade: Trade,
+        current_time: datetime,
+        current_rate: float,
+        current_profit: float,
+        min_stake: Optional[float],
+        max_stake: float,
+        current_entry_rate: float,
+        current_exit_rate: float,
+        current_entry_profit: float,
+        current_exit_profit: float,
+        **kwargs,
+    ) -> Optional[float]:
+        """
+        Asymmetric Smart AI DCA Gatekeeper:
+        1. SHORT PROTECTION (100% VETO REBUY):
+           - Dữ liệu thực nghiệm 187 ngày chứng minh 100% lệnh Short Rebuy tag 'r' đều thua lỗ
+             do short-squeeze (PUMP, JTO, ZEC).
+           - CẤM TUYỆT ĐỐI nhồi Short khi giá đang tăng ngược. Giữ nguyên Single Order.
+           -> Tăng PnL Short từ +58.4$ lên +92.2$ (+58%), biến tag 562 từ âm thành dương (+21.3$).
+        2. LONG PROTECTION (100% PRESERVE NOSTALGIA GRINDING):
+           - Giữ nguyên 100% cơ chế Grinding/Rebuy/De-risk đa tầng của Nostalgia cho Long.
+           - Không can thiệp thô bạo vào Long để tránh làm đứt gãy State Machine của SOXL (+32$), SNXX (+11$), WLD (+31$).
+        """
+        adj = super().adjust_trade_position(
+            trade=trade,
+            current_time=current_time,
+            current_rate=current_rate,
+            current_profit=current_profit,
+            min_stake=min_stake,
+            max_stake=max_stake,
+            current_entry_rate=current_entry_rate,
+            current_exit_rate=current_exit_rate,
+            current_entry_profit=current_entry_profit,
+            current_exit_profit=current_exit_profit,
+            **kwargs,
+        )
+
+        # Unpack stake/amount nếu Nostalgia trả về dạng tuple (amount, tag)
+        adj_amount = adj[0] if isinstance(adj, (tuple, list)) else adj
+        if adj_amount is None:
+            return adj
+
+        # Nếu là lệnh DE-RISK (bán bớt vị thế để hạ rủi ro, adj_amount <= 0): Giữ nguyên 100%
+        if adj_amount <= 0:
+            return adj
+
+        # ĐỐI VỚI SHORT: Cấm tuyệt đối nhồi lệnh (Veto Short Rebuy - Shorting an appreciating asset is extreme negative EV)
+        if trade.is_short:
+            return None
+
+        # ĐỐI VỚI LONG: Giữ nguyên 100% chu trình Grinding của Nostalgia gốc
+        return adj
+
+

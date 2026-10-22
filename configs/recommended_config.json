@@ -7,12 +7,13 @@
   // copy configs/exampleconfig_secret.json to user_data/config-private.json
   // Change     "dry_run": true, to     "dry_run": false, after testing
 
-  "strategy": "NostalgiaForInfinityX8",
+  "strategy": "NostalgiaForInfinityX8_Combined_AI",
   "add_config_files": [
     "../configs/trading_mode-futures.json",
     "../configs/pairlist-volume-binance-usdt.json",
     "../configs/blacklist-binance.json",
     "../configs/exampleconfig.json",
-    "../configs/exampleconfig_secret.json"
+    "../configs/exampleconfig_secret.json",
+    "../configs/custom_short_config_example.json"
   ]
 }

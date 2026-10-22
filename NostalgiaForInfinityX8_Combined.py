@@ -37,7 +37,7 @@ class NostalgiaForInfinityX8_Combined(NostalgiaForInfinityX8):
 
     def version(self) -> str:
         base_ver = super().version()
-        return f"{base_ver} + CustomShortSignals_v3.6.3_Layer1_Layer2"
+        return f"{base_ver} + CustomShortSignals_v3.6.3_Layer1_Layer2 + AsymmetricSmartDCA"
 
     def __init__(self, config: dict) -> None:
         super().__init__(config)
@@ -534,3 +534,49 @@ class NostalgiaForInfinityX8_Combined(NostalgiaForInfinityX8):
             **kwargs,
         )
         return min(lev, max_leverage) if max_leverage else lev
+
+    def adjust_trade_position(
+        self,
+        trade: Trade,
+        current_time: datetime,
+        current_rate: float,
+        current_profit: float,
+        min_stake: Optional[float],
+        max_stake: float,
+        current_entry_rate: float,
+        current_exit_rate: float,
+        current_entry_profit: float,
+        current_exit_profit: float,
+        **kwargs,
+    ) -> Optional[float]:
+        """
+        Asymmetric Smart DCA Gatekeeper:
+        1. SHORT PROTECTION: CẤM 100% việc nhồi Short khi giá đang tăng ngược xu hướng (Veto Short Rebuy 'r').
+        2. LONG PROTECTION: Bảo toàn 100% cơ chế Grinding / Rebuy / De-risk đa tầng của Nostalgia cho Long.
+        """
+        adj = super().adjust_trade_position(
+            trade=trade,
+            current_time=current_time,
+            current_rate=current_rate,
+            current_profit=current_profit,
+            min_stake=min_stake,
+            max_stake=max_stake,
+            current_entry_rate=current_entry_rate,
+            current_exit_rate=current_exit_rate,
+            current_entry_profit=current_entry_profit,
+            current_exit_profit=current_exit_profit,
+            **kwargs,
+        )
+
+        adj_amount = adj[0] if isinstance(adj, (tuple, list)) else adj
+        if adj_amount is None:
+            return adj
+
+        if adj_amount <= 0:
+            return adj
+
+        if trade.is_short:
+            return None
+
+        return adj
+
