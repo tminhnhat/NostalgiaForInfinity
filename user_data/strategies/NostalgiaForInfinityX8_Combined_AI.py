@@ -70,7 +70,7 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
 
     def version(self) -> str:
         base_ver = super().version()
-        return f"{base_ver} + AI_Gatekeeper_v3.5_SmartDCA"
+        return f"{base_ver} + AI_Gatekeeper_v3.9_AsymmetricAdaptiveTrailing"
 
     def __init__(self, config: dict) -> None:
         # Tạm thời ẩn các key custom khỏi nfi_parameters để Nostalgia gốc không log warning không cần thiết
@@ -657,11 +657,35 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
         4. Chuyển tiếp an toàn vào pipeline Combined & Nostalgia gốc
         """
         orig_tag = getattr(trade, "enter_tag", "") or ""
+        leverage = trade.leverage or 5.0
+        open_rate = trade.open_rate
+
+        # =========================================================================
+        # 1. ADAPTIVE TRAILING PROFIT ENGINE CHO VỊ THẾ SHORT
+        # Áp dụng cho toàn bộ Short (gồm cả Tag 562 và Custom Short) vì Short là Single Order (không DCA).
+        # Khóa lợi nhuận thích ứng theo biên độ MFE, tối ưu hóa các siêu lệnh như MVLL, CHIP, ICNT.
+        # (ĐỐI VỚI LONG: Giữ nguyên 100% State Machine của Nostalgia gốc để không làm đứt gãy chu trình De-risk/Grinding).
+        # =========================================================================
+        if trade.is_short and current_profit >= 0.12:
+            min_r = trade.min_rate if trade.min_rate is not None else open_rate
+            mfe_roe = (open_rate - min_r) / open_rate * leverage
+
+            # Tầng 1: Mega Short Trend (MFE >= +45% ROE = +9% spot 5x)
+            # Khóa bảo vệ tại 65% của đỉnh MFE, bắt buộc current_profit >= +20% ROE (tối ưu MVLL từ +16% lên +31% ROE)
+            if mfe_roe >= 0.45 and current_profit >= 0.20 and current_profit <= mfe_roe * 0.65:
+                return f"exit_short_adaptive_trailing_mega ( {orig_tag})"
+
+            # Tầng 2: Mid Short Trend (MFE >= +25% ROE = +5% spot 5x)
+            # Khóa bảo vệ tối thiểu +15% ROE (chốt trong biên độ 12% - 15% ROE)
+            if mfe_roe >= 0.25 and current_profit >= 0.12 and current_profit <= 0.15:
+                return f"exit_short_adaptive_trailing_mid ( {orig_tag})"
+
+        # =========================================================================
+        # 2. AI SHORT PROTECTION ENGINE
+        # =========================================================================
         is_ai_short = trade.is_short and ("_AI_PASS" in orig_tag or any(t in orig_tag for t in self.short_strategy.custom_short_tags))
 
         if is_ai_short:
-            leverage = trade.leverage or 5.0
-            open_rate = trade.open_rate
             min_r = trade.min_rate if trade.min_rate is not None else open_rate
             mfe_lev = (open_rate - min_r) / open_rate * leverage
             trade_duration_hours = (current_time - trade.open_date_utc).total_seconds() / 3600.0
@@ -778,5 +802,164 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
 
         # ĐỐI VỚI LONG: Giữ nguyên 100% chu trình Grinding của Nostalgia gốc
         return adj
+
+    def confirm_trade_entry(
+        self,
+        pair: str,
+        order_type: str,
+        amount: float,
+        rate: float,
+        time_in_force: str,
+        current_time: datetime,
+        entry_tag: Optional[str],
+        side: str,
+        **kwargs,
+    ) -> bool:
+        """
+        Circuit Breaker & Safety Entry Confirmation:
+        - Kế thừa toàn bộ Portfolio Exposure Guard (tối đa 4 lệnh Short) và Weekend/Monday Guards của Combined.
+        - Extreme Volatility & Panic Dump Circuit Breaker cho Long:
+          Chặn các lệnh Long bắt dao rơi khi Volume 1h nổ bất thường (> 8.0x SMA 24h) VÀ giá đang sập dốc đứng (> 8% trong 4h).
+          Triệt tiêu các thảm họa flash dump không có thanh khoản hồi phục (như ca KORU -76.69$).
+        """
+        base_confirm = super().confirm_trade_entry(
+            pair=pair,
+            order_type=order_type,
+            amount=amount,
+            rate=rate,
+            time_in_force=time_in_force,
+            current_time=current_time,
+            entry_tag=entry_tag,
+            side=side,
+            **kwargs,
+        )
+        if not base_confirm:
+            return False
+
+        # Extreme Volatility & Panic Dump Circuit Breaker cho vị thế Long
+        if side in ("long", "buy") and hasattr(self, "dp") and self.dp is not None:
+            try:
+                df_pair, _ = self.dp.get_analyzed_dataframe(pair, self.timeframe)
+                if len(df_pair) >= 50:
+                    current_rows = df_pair.loc[df_pair["date"] <= current_time]
+                    if len(current_rows) >= 50:
+                        last_close = float(current_rows["close"].iloc[-1])
+                        vol_1h = float(current_rows["volume"].tail(12).sum())
+                        vol_sma = float(current_rows["volume"].tail(288).mean() * 12)
+                        vol_ratio = vol_1h / max(vol_sma, 1e-5)
+
+                        idx_4h = -49 if len(current_rows) >= 49 else 0
+                        p_4h_ago = float(current_rows["close"].iloc[idx_4h])
+                        drop_4h = (last_close - p_4h_ago) / max(p_4h_ago, 1e-5)
+
+                        if vol_ratio > 8.0 and drop_4h < -0.08:
+                            log.warning(
+                                "Circuit Breaker Triggered: Blocked %s Long entry at %s (Vol 1h ratio: %.1fx, 4h drop: %.1f%%)",
+                                pair, current_time, vol_ratio, drop_4h * 100.0,
+                            )
+                            return False
+            except Exception as e:
+                log.warning("Circuit Breaker evaluation error for %s: %s", pair, e)
+
+        return True
+
+    def custom_stake_amount(
+        self,
+        pair: str,
+        current_time: datetime,
+        current_rate: float,
+        proposed_stake: float,
+        min_stake: Optional[float],
+        max_stake: float,
+        leverage: float,
+        entry_tag: Optional[str],
+        side: str,
+        **kwargs,
+    ) -> float:
+        """
+        Dynamic Position Sizing: Kết hợp Chiều 1 (Dollar Volatility Equalization) & Chiều 2 (AI Confidence Sizing)
+        - Chiều 1: Nghịch đảo biến động (Inverse ATR%). Cố định Dollar Risk Budget.
+                   Coin biến động thấp -> Tăng stake lên 120-130$.
+                   Coin biến động cực đoan -> Tự động ép stake về 25-35$ để triệt tiêu drawdown.
+        - Chiều 2: Trọng số tin cậy AI (AI Confidence Sizing).
+                   ai_prob >= 0.75 -> Tăng stake 1.20x.
+                   ai_prob < 0.60 -> Giảm stake 0.80x.
+        - Dynamic Margin Buffer:
+                   Chỉ cho phép nâng stake lên 130$ nếu số slot đang mở <= 6 (còn dôi dư margin trong ví).
+                   Nếu số slot đang mở > 6: Khóa trần stake <= 100$ để giữ an toàn margin cho DCA/Maintenance.
+        - Asymmetric Sizing Belts:
+                   Khóa trần Short <= 100$ (tránh phóng đại lỗ các lệnh Short bão).
+                   Khóa sàn Long >= 25$ (đảm bảo các lệnh DCA con 10-20% luôn >= 5 USDT, không vi phạm Min Notional Binance).
+        """
+        base_stake = proposed_stake if proposed_stake and proposed_stake > 0 else 100.0
+        vol_mult = 1.0
+        ai_mult = 1.0
+
+        if hasattr(self, "dp") and self.dp is not None:
+            df_pair, _ = self.dp.get_analyzed_dataframe(pair, self.timeframe)
+            if len(df_pair) > 0:
+                current_rows = df_pair.loc[df_pair["date"] <= current_time]
+                if len(current_rows) > 0:
+                    last_c = current_rows.iloc[-1]
+
+                    # 1. Chiều 1: Inverse ATR Sizing (Benchmark ATR% = 1.2% / nến 5m)
+                    val_atr = last_c.get("ai_feat_atr_norm", None)
+                    if val_atr is not None and not np.isnan(val_atr) and val_atr > 0:
+                        atr_norm = float(val_atr)
+                        vol_mult = 0.012 / atr_norm
+                        vol_mult = float(np.clip(vol_mult, 0.25, 1.30))
+
+                    # 2. Chiều 2: AI Confidence Sizing (áp dụng khi có ai_short_prob)
+                    val_prob = last_c.get("ai_short_prob", None)
+                    if val_prob is not None and not np.isnan(val_prob) and val_prob > 0:
+                        p = float(val_prob)
+                        if p >= 0.75:
+                            ai_mult = 1.20
+                        elif p < 0.60:
+                            ai_mult = 0.80
+
+        target_stake = base_stake * vol_mult * ai_mult
+
+        # 3. Dynamic Margin Buffer & Tiered Sizing Belts:
+        open_trades_count = len(Trade.get_open_trades()) if Trade else 0
+
+        # Mặc định cho Long: Nâng stake lên 130$ nếu slot <= 6, ngược lại giữ <= 100$
+        max_allowed_stake = 130.0 if open_trades_count <= 6 else 100.0
+
+        # Phân tầng trần cho vị thế Short (Tiered Short Sizing):
+        if side in ("short", "sell"):
+            etag = str(entry_tag or "")
+
+            # Tầng 1: Elite High-WR Short Tags (100% Win Rate thực chứng: 706, 724, 721)
+            # Dữ liệu thực chứng 187 ngày: 8 lệnh Thắng / 0 lệnh Thua
+            # -> Cho phép nâng stake lên đến 130$ khi slot <= 6 để tối đa hóa lợi nhuận mà không tăng rủi ro
+            tier1_elite_tags = ("706", "724", "721")
+            is_tier1 = any(t in etag for t in tier1_elite_tags) and ("_AI_PASS" in etag or "AI_PASS" in etag)
+
+            # Tầng 2: Standard AI Short Tags (Win Rate thực chứng 75% - 89%: 702 703 731, 701 702 703 731)
+            # Nới nhẹ trần lên 115$ khi slot <= 6 (vừa mở rộng biên lãi của 11 lệnh thắng, vừa khống chế mức tăng lỗ nếu có)
+            tier2_ai_tags = ("702 703 731", "701 702 703 731")
+            is_tier2 = any(t in etag for t in tier2_ai_tags) and ("_AI_PASS" in etag or "AI_PASS" in etag)
+
+            if is_tier1 and open_trades_count <= 6:
+                max_allowed_stake = 130.0
+            elif is_tier2 and open_trades_count <= 6:
+                max_allowed_stake = 115.0
+            else:
+                # Tầng 3: Tag 562 gốc (nguồn gốc các ca bão JTO, PUMP, ZEC, RENDER) và các tag chưa xác thực -> Khóa chặt trần <= 100$
+                max_allowed_stake = 100.0
+
+        # Khóa sàn Long >= 25$ (đảm bảo các lệnh nhồi con 10-20% luôn >= 5 USDT)
+        min_allowed_stake = 25.0 if side in ("long", "buy") else 20.0
+
+        if min_stake is not None:
+            min_allowed_stake = max(min_allowed_stake, min_stake)
+        if max_stake is not None and max_stake > 0:
+            max_allowed_stake = min(max_allowed_stake, max_stake)
+
+        target_stake = float(np.clip(target_stake, min_allowed_stake, max_allowed_stake))
+        return target_stake
+
+
 
 
