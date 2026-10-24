@@ -363,7 +363,7 @@ class NostalgiaForInfinityX8_Combined(NostalgiaForInfinityX8):
             return False
 
         # Additional protection for short trades
-        if side == "short":
+        if side in ("short", "sell"):
             tags = entry_tag.split() if entry_tag else []
             open_trades = Trade.get_open_trades()
             open_shorts = [t for t in open_trades if getattr(t, "is_short", False)]
@@ -461,14 +461,14 @@ class NostalgiaForInfinityX8_Combined(NostalgiaForInfinityX8):
                     )
                     return False
 
-                # 4. BTC Momentum Filter cho Relief Bounces & Scalp Pullbacks (Upgrade 3 & Option C):
-                # Không Short chạm EMA / StochRSI cross-down (721, 722, 724) khi BTC đang có đà phục hồi mạnh
-                # (RSI 15m > 54.0 hoặc RSI 1h > 54.0), tránh chặn đầu xe lửa khi thị trường đang dồn lực hồi phục (triệt tiêu DOT -94.73 USDT).
-                if any(t in ["721", "722", "724"] for t in tags):
+                # 4. BTC Momentum Filter cho Relief Bounces, Scalp Pullbacks & Breakdown (Chặn bẫy short squeeze):
+                # Không Short khi BTC đang có đà phục hồi mạnh (RSI 15m > 54.0 hoặc RSI 1h > 54.0),
+                # tránh chặn đầu xe lửa khi thị trường đang dồn lực hồi phục (triệt tiêu STRK -22.64 USDT, ZEC -48.95 USDT).
+                if any(t in ["702", "703", "721", "722", "724"] for t in tags):
                     has_btc_bull_mom = (btc_rsi15m is not None and btc_rsi15m > 54.0) or (btc_rsi1h is not None and btc_rsi1h > 54.0)
                     if has_btc_bull_mom:
                         log.info(
-                            "BTC Momentum Filter: Blocked %s relief/scalp short (%s) due to strong BTC bullish momentum (RSI 15m: %s, 1h: %s) at %s",
+                            "BTC Momentum Filter: Blocked %s breakdown/relief short (%s) due to strong BTC bullish momentum (RSI 15m: %s, 1h: %s) at %s",
                             pair, entry_tag, f"{btc_rsi15m:.1f}" if btc_rsi15m else "N/A", f"{btc_rsi1h:.1f}" if btc_rsi1h else "N/A", current_time,
                         )
                         return False

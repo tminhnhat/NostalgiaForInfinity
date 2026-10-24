@@ -409,7 +409,7 @@ class NostalgiaForInfinityX8_ShortSignals:
             & (~btc_bullish)
         )
 
-        # TAG 702: MACD Zero-Line Rejection & Momentum
+        # TAG 702: MACD Zero-Line Rejection & Momentum (Nâng cấp v6.5 - Chống bẫy kiệt sức Selling Climax)
         shift_macdhist = np.roll(macdhist, 1)
         shift_low_12 = np.roll(rolling_low_12, 1)
         cond_702 = (
@@ -423,7 +423,8 @@ class NostalgiaForInfinityX8_ShortSignals:
             & (close < open_px)
             & (lower_wick_ratio <= 0.40)                  # NÂNG CẤP HƯỚNG 1: Nến xả dứt khoát, loại bỏ bẫy rút chân pinbar (râu dưới > 40%)
             & (vol_spike_ratio >= 1.20)                   # Lực bán đột biến xác nhận
-            & (vol_spike_ratio <= 5.0)                    # Loại bỏ volume dị biệt selling climax
+            & (vol_spike_ratio <= 3.10)                   # Siết chặt trần volume: Loại bỏ selling climax dị biệt (chặn MSTR 3.3x, COIN 5.1x)
+            & ~((lower_wick_ratio <= 0.02) & (close <= bbl * 1.0015) & (vol_spike_ratio >= 1.60)) # Chống bẫy Floor Slam nến đỏ cụt chân cắm sàn đáy BB (chặn SKHYNIX và MSTR)
             & (rsi_14 > 28.0) & (rsi_14 < 48.0)
             & (stochrsi_k >= 20.0)                        # BẢO VỆ CHỐNG BÁN ĐÁY: Không short khi StochRSI đã cạn kiệt ở đáy
             & ((close < shift_low_12) | btc_dumping)

@@ -737,9 +737,15 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
                                 return f"exit_ai_early_macro_cut ( {orig_tag})"
 
             # 1. AI Trailing Profit Lock:
-            # Nếu vị thế đã từng đạt MFE >= +8.0% đòn bẩy (+1.6% spot) nhưng hiện tại tụt về <= +1.0% đòn bẩy:
-            # Khóa lợi nhuận an toàn, không để lệnh từ lãi chuyển thành lỗ!
-            if mfe_lev >= 0.080 and current_profit <= 0.010:
+            # Tầng 1: Đạt MFE >= +6.8% ROE (+1.36% spot 5x) nhưng tụt về <= +2.4% ROE:
+            # Khóa lợi nhuận an toàn, bảo đảm thoát lệnh có net profit dương sau phí sàn và trượt giá!
+            # Biến hoàn toàn STRK và 1000SHIB thành các lệnh chốt lời xanh (WIN)!
+            if mfe_lev >= 0.068 and current_profit <= 0.024:
+                return f"exit_ai_profit_lock ( {orig_tag})"
+
+            # Tầng 2: Đạt MFE >= +11.0% ROE nhưng tụt về <= +4.5% ROE:
+            # Khóa bảo vệ phần lớn thặng dư lợi nhuận!
+            if mfe_lev >= 0.110 and current_profit <= 0.045:
                 return f"exit_ai_profit_lock ( {orig_tag})"
 
             # 2. AI Dynamic Reversal Harvest:
