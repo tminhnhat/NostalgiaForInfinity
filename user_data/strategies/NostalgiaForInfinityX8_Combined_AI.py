@@ -989,8 +989,8 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
             tier1_elite_tags = ("706", "724", "721", "711")
             is_tier1 = any(t in etag for t in tier1_elite_tags) and ("_AI_PASS" in etag or "AI_PASS" in etag)
 
-            # Tầng 2: Standard AI Short Tags (Win Rate thực chứng 75% - 89%: 702 703 731, 701 702 703 731)
-            tier2_ai_tags = ("702 703 731", "701 702 703 731", "701 703 706 731")
+            # Tầng 2: Standard AI Short Tags (Win Rate thực chứng 80% - 100%: 702 703 731, 701 703 706 731)
+            tier2_ai_tags = ("702 703 731", "701 703 706 731")
             is_tier2 = any(t in etag for t in tier2_ai_tags) and ("_AI_PASS" in etag or "AI_PASS" in etag)
 
             # Short Concurrent Double-Drawdown Guard:
