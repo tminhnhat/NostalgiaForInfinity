@@ -350,7 +350,7 @@ class NostalgiaForInfinityX8_ShortSignals:
             & (vol_spike_ratio <= 5.0)                    # Loại bỏ volume dị biệt selling climax
             & (ribbon_spread >= 0.0012)                   # NÂNG CẤP v6.0: Dải EMA đang mở rộng phân kỳ giảm
             & (dist_ema50_1h <= -0.003)                   # NÂNG CẤP v6.0: Đã xuyên thủng cản 1H EMA 50 > 0.3%
-            & (rsi_14 >= 33.0) & (rsi_14 < 46.0)          # NÂNG CẤP: Quán tính giảm mạnh nhưng chưa quá bán (>= 33 chống bẫy bán tháo ZEC)
+            & (rsi_14 > 28.0) & (rsi_14 < 46.0)           # Đang có quán tính giảm, chưa quá bán
             & (stochrsi_k >= 20.0)                        # Chống bán tháo ở đáy 5m
             & (~rsi_1h_oversold)                          # Không short khi 1h đã quá bán sâu < 30
             & (~rsi_1h_overbought)                        # Không short nếu khung 1h đang siêu tăng
