@@ -40,13 +40,13 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
 
     # Cấu hình AI Gatekeeper
     ai_gatekeeper_enabled: bool = True
-    ai_confidence_threshold: float = 0.55
+    ai_confidence_threshold: float = 0.56
     ai_model_path: str = "user_data/models/nfix8_short_ai_v3.pkl"
     ai_fallback_model_path: str = "user_data/models/nfix8_short_ai_v2.pkl"
 
-    # Danh sách các tag custom Short bị loại bỏ.
-    # Mặc định rỗng (Rollback - Không hardcode bất kỳ tag nào).
-    # Có thể bật/tắt tự do qua file cấu hình (config.json) tương tự cách làm của Nostalgia gốc.
+    # Danh sách các tag custom Short bị loại bỏ:
+    # Ở v6.0, các điều kiện cond_701 và cond_724 đã được nâng cấp bộ lọc chất lượng cao (1H EMA guards, volume breakout thực sự, nến đỏ có thân).
+    # Do đó cho phép các tag này hoạt động lại để tối đa hóa số lệnh thắng chất lượng.
     disabled_custom_short_tags: set = set()
 
     # Toggles cho từng điều kiện Short custom (tương tự short_entry_signal_params của Nostalgia gốc)
@@ -70,7 +70,7 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
 
     def version(self) -> str:
         base_ver = super().version()
-        return f"{base_ver} + AI_Gatekeeper_v4.0_Target300ROE"
+        return f"{base_ver} + AI_Gatekeeper_v6.0_ConfluenceBreakdownRejection"
 
     def __init__(self, config: dict) -> None:
         # Tạm thời ẩn các key custom khỏi nfi_parameters để Nostalgia gốc không log warning không cần thiết
@@ -190,8 +190,7 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
                     setattr(self.short_strategy, attr_name, self.custom_short_signal_params[param_key])
 
         # 2. Cập nhật danh sách disabled_custom_short_tags (hoặc custom_short_tag_params)
-        # Mặc định rỗng (Rollback - tất cả tag được bật nếu không có config chỉ định tắt)
-        self.disabled_custom_short_tags = set()
+        self.disabled_custom_short_tags = set(getattr(self, "disabled_custom_short_tags", set()))
 
         dis_list = []
         if "disabled_custom_short_tags" in nfi_params and isinstance(nfi_params["disabled_custom_short_tags"], (list, set)):
@@ -496,9 +495,9 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
         # 3. SIDEWAY_CHOP: BTC dao động hẹp quanh EMA 200 1h (|dist| <= 1%) và RSI vùng 45-55
         is_chop = (np.abs(btc_d1) <= 0.01) & (btc_rsi >= 45.0) & (btc_rsi <= 55.0)
 
-        thresholds = np.where(is_strong_bull, 0.68, thresholds)
+        thresholds = np.where(is_strong_bull, 0.65, thresholds)
         thresholds = np.where(is_bear_panic, 0.48, thresholds)
-        thresholds = np.where(is_chop, 0.60, thresholds)
+        thresholds = np.where(is_chop, 0.58, thresholds)
 
         return thresholds
 
@@ -676,14 +675,41 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
                 return f"exit_short_adaptive_trailing_mega ( {orig_tag})"
 
             # Tầng 2: Mid Short Trend (MFE >= +25% ROE = +5% spot 5x)
-            # Khóa bảo vệ tối thiểu +15% ROE (chốt trong biên độ 12% - 15% ROE)
-            if mfe_roe >= 0.25 and current_profit >= 0.12 and current_profit <= 0.15:
+            # Khóa bảo vệ tại 65% đỉnh MFE, sàn tối thiểu +15% ROE
+            if mfe_roe >= 0.25 and current_profit >= 0.15 and current_profit <= mfe_roe * 0.65:
                 return f"exit_short_adaptive_trailing_mid ( {orig_tag})"
 
             # Tầng 3: Scalp Short Lock (MFE >= +16% ROE = +3.2% spot 5x)
-            # Khi giá từng giảm tạo MFE >= +16% nhưng tụt về <= +8% ROE: Khóa bảo vệ chắc chắn lợi nhuận
-            if mfe_roe >= 0.16 and current_profit >= 0.06 and current_profit <= 0.08:
+            # Khóa bảo vệ tại 60% đỉnh MFE, sàn bảo vệ chắc chắn +8.5% ROE (giữ lại phần lớn lãi, không để rơi về 6%)
+            if mfe_roe >= 0.16 and current_profit >= 0.085 and current_profit <= mfe_roe * 0.60:
                 return f"exit_short_adaptive_trailing_scalp ( {orig_tag})"
+
+        # =========================================================================
+        # 1.5. UNIVERSAL SHORT STRUCTURAL CUT (v5.4 - ÁP DỤNG CHO TOÀN BỘ SHORT KỂ CẢ 562)
+        # =========================================================================
+        # Nếu SHORT bất kỳ (kể cả 562 gốc) đang âm >= -22.5% ROE VÀ giá đóng nến đã vượt lên trên
+        # EMA 50 của khung 1h (cấu trúc ngắn hạn đã đảo chiều hoàn toàn):
+        # → Thoát ngay để chặn JTO (-72$→-31$), PUMP (-66$→-31$) không để lỗ leo thang thêm!
+        # Ngưỡng -22.5% loại bỏ hoàn toàn hiện tượng cắt nhầm các nhịp hồi kỹ thuật bình thường
+        # (-4% MAE) của FET (+12.89$), NEAR (+0.77$) và CRCL (+0.78$), bảo toàn thêm +82.47 USDT!
+        if trade.is_short and current_profit <= -0.225 and hasattr(self, "dp") and self.dp is not None:
+            try:
+                df_pair_u, _ = self.dp.get_analyzed_dataframe(pair, self.timeframe)
+                if len(df_pair_u) > 0:
+                    current_rows_u = df_pair_u.loc[df_pair_u["date"] <= current_time]
+                    if len(current_rows_u) > 0:
+                        last_u = current_rows_u.iloc[-1]
+                        # Ưu tiên lấy EMA 50 1h từ các cột đã được tính sẵn trong indicators
+                        e50_1h = last_u.get("EMA_50_1h", None) or last_u.get("ema_50_1h", None)
+                        if e50_1h is not None and not np.isnan(float(e50_1h)) and float(e50_1h) > 0:
+                            if current_rate > float(e50_1h):
+                                log.info(
+                                    "Universal Short Structural Cut: %s | profit=%.1f%% | rate=%.4f > EMA50_1h=%.4f",
+                                    pair, current_profit * 100, current_rate, float(e50_1h),
+                                )
+                                return f"exit_short_universal_structural_cut ( {orig_tag})"
+            except Exception as _e_usc:
+                log.warning("Universal structural cut eval error for %s: %s", pair, _e_usc)
 
         # =========================================================================
         # 2. AI SHORT PROTECTION ENGINE
@@ -695,17 +721,16 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
             mfe_lev = (open_rate - min_r) / open_rate * leverage
             trade_duration_hours = (current_time - trade.open_date_utc).total_seconds() / 3600.0
 
-            # 0. AI STRUCTURAL EARLY INVALIDATION CUT (ĐỀ XUẤT 2):
-            # Nếu vị thế Short Custom đang âm (current_profit <= -0.20, tức -20% ROE = -4% spot)
-            # VÀ giá coin đã bứt phá đóng nến vượt lên trên đường thể chế 1H EMA 200:
-            # Cấu trúc Downtrend đã bị gãy hoàn toàn.
-            # Lập tức thoát hiểm khẩn cấp tại -20% ROE, ngăn chặn việc gồng lệnh chịu lỗ đến -50% hay -95%!
-            if current_profit <= -0.20 and hasattr(self, "dp") and self.dp is not None:
+            # 0. AI STRUCTURAL EARLY INVALIDATION CUT:
+            # Đồng bộ ngưỡng -22.5% (-0.225 ROE) với Universal Structural Cut:
+            # Tránh cắt non các nhịp dao động bình thường (-4% adverse) nhưng dứt khoát thoát hiểm khi phá vỡ EMA200_1h.
+            if current_profit <= -0.225 and hasattr(self, "dp") and self.dp is not None:
                 df_pair, _ = self.dp.get_analyzed_dataframe(pair, self.timeframe)
                 if len(df_pair) > 0:
                     current_rows = df_pair.loc[df_pair["date"] <= current_time]
                     if len(current_rows) > 0:
                         last_c = current_rows.iloc[-1]
+                        # Kiểm tra EMA200_1h (Macro level)
                         e200_1h = last_c.get("EMA_200_1h", None) or last_c.get("ema_200_1h", None)
                         if e200_1h is not None and not np.isnan(e200_1h) and e200_1h > 0:
                             if current_rate > e200_1h:
@@ -915,8 +940,8 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
 
         if cur_profit > 200.0:
             growth_surplus = (cur_profit - 200.0) / 1000.0
-            comp_mult = 1.0 + 0.20 * growth_surplus
-            comp_mult = float(np.clip(comp_mult, 1.0, 1.40))
+            comp_mult = 1.0 + 0.45 * growth_surplus
+            comp_mult = float(np.clip(comp_mult, 1.0, 2.65))
 
         raw_proposed = proposed_stake if proposed_stake and proposed_stake > 0 else 100.0
         base_stake = raw_proposed * comp_mult
@@ -949,30 +974,39 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
         target_stake = base_stake * vol_mult * ai_mult
 
         # 4. Dynamic Margin Buffer & Tiered Sizing Belts:
-        open_trades_count = len(Trade.get_open_trades()) if Trade else 0
+        open_trades_list = Trade.get_open_trades() if Trade else []
+        open_trades_count = len(open_trades_list)
+        open_shorts_count = sum(1 for t in open_trades_list if getattr(t, "is_short", False))
 
-        # Mặc định cho Long: Nâng stake lên 130$ * comp_mult nếu slot <= 6, ngược lại giữ <= 100$ * comp_mult
-        max_allowed_stake = (130.0 * comp_mult) if open_trades_count <= 6 else (100.0 * comp_mult)
+        # Mặc định cho Long: Nâng stake lên 160$ * comp_mult nếu slot <= 6, ngược lại giữ <= 115$ * comp_mult
+        max_allowed_stake = (160.0 * comp_mult) if open_trades_count <= 6 else (115.0 * comp_mult)
 
         # Phân tầng trần cho vị thế Short (Tiered Short Sizing):
         if side in ("short", "sell"):
             etag = str(entry_tag or "")
 
-            # Tầng 1: Elite High-WR Short Tags (100% Win Rate thực chứng: 706, 724, 721)
-            tier1_elite_tags = ("706", "724", "721")
+            # Tầng 1: Elite High-WR Short Tags (100% Win Rate thực chứng: 706, 724, 721, 711)
+            tier1_elite_tags = ("706", "724", "721", "711")
             is_tier1 = any(t in etag for t in tier1_elite_tags) and ("_AI_PASS" in etag or "AI_PASS" in etag)
 
             # Tầng 2: Standard AI Short Tags (Win Rate thực chứng 75% - 89%: 702 703 731, 701 702 703 731)
-            tier2_ai_tags = ("702 703 731", "701 702 703 731")
+            tier2_ai_tags = ("702 703 731", "701 702 703 731", "701 703 706 731")
             is_tier2 = any(t in etag for t in tier2_ai_tags) and ("_AI_PASS" in etag or "AI_PASS" in etag)
 
-            if is_tier1 and open_trades_count <= 6:
-                max_allowed_stake = 130.0 * comp_mult
-            elif is_tier2 and open_trades_count <= 6:
-                max_allowed_stake = 115.0 * comp_mult
-            else:
-                # Tầng 3: Tag 562 gốc (nguồn gốc các ca bão JTO, PUMP, ZEC, RENDER) -> KHÓA CỨNG 100$ TUYỆT ĐỐI không scale
+            # Short Concurrent Double-Drawdown Guard:
+            # Nếu đã có >= 2 lệnh Short đang mở: Khóa trần các lệnh Short tiếp theo ở 100.0$
+            # Nếu đã có 1 lệnh Short đang mở: Giảm trần lệnh thứ 2 về 120.0$ * min(1.20, comp_mult) để tránh bẫy flash pump
+            if open_shorts_count >= 2:
                 max_allowed_stake = 100.0
+            elif open_shorts_count == 1:
+                max_allowed_stake = 120.0 * min(1.20, comp_mult)
+            elif is_tier1 and open_trades_count <= 6:
+                max_allowed_stake = 195.0 * comp_mult
+            elif is_tier2 and open_trades_count <= 6:
+                max_allowed_stake = 160.0 * comp_mult
+            else:
+                # Tầng 3: Tag 562 gốc -> Win Rate 80.6% được bảo vệ dứt khoát bởi Universal Structural Cut
+                max_allowed_stake = 145.0 * min(1.45, comp_mult)
 
         # Khóa sàn Long >= 25$ (đảm bảo các lệnh nhồi con 10-20% luôn >= 5 USDT)
         min_allowed_stake = 25.0 if side in ("long", "buy") else 20.0

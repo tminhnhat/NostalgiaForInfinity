@@ -265,7 +265,7 @@ class NostalgiaForInfinityX8_ShortSignals:
             rsi_1h_overbought = (rsi_1h > 62.0) & (close > ema_200)
             rsi_1h_oversold = rsi_1h < 30.0
 
-        # NÂNG CẤP TẦNG 1: Macro 1H Trend Guards (Đường xu hướng thể chế 1H EMA 200)
+        # NÂNG CẤP TẦNG 1: Macro 1H Trend Guards (Đường xu hướng thể chế 1H EMA 200 & EMA 50)
         close_above_ema200_1h = np.zeros(n_rows, dtype=bool)
         if "EMA_200_1h" in dataframe.columns:
             ema_200_1h = dataframe["EMA_200_1h"].to_numpy(copy=False)
@@ -273,6 +273,17 @@ class NostalgiaForInfinityX8_ShortSignals:
         elif "ema_200_1h" in dataframe.columns:
             ema_200_1h = dataframe["ema_200_1h"].to_numpy(copy=False)
             close_above_ema200_1h = (close > ema_200_1h) & np.isfinite(ema_200_1h) & (ema_200_1h > 0)
+
+        # Khoảng cách tương đối tới 1H EMA 50
+        dist_ema50_1h = np.zeros(n_rows, dtype=float)
+        if "EMA_50_1h" in dataframe.columns:
+            ema_50_1h = dataframe["EMA_50_1h"].to_numpy(copy=False)
+            valid_50 = np.isfinite(ema_50_1h) & (ema_50_1h > 0)
+            dist_ema50_1h = np.where(valid_50, (close - ema_50_1h) / np.where(valid_50, ema_50_1h, 1.0), 0.0)
+        elif "ema_50_1h" in dataframe.columns:
+            ema_50_1h = dataframe["ema_50_1h"].to_numpy(copy=False)
+            valid_50 = np.isfinite(ema_50_1h) & (ema_50_1h > 0)
+            dist_ema50_1h = np.where(valid_50, (close - ema_50_1h) / np.where(valid_50, ema_50_1h, 1.0), 0.0)
 
         # Trạng thái siêu sóng tăng đa khung thời gian
         macro_bull_ribbon = (ema_9 > ema_21) & (ema_21 > ema_50) & (ema_50 > ema_200) & (close > ema_200)
@@ -321,8 +332,13 @@ class NostalgiaForInfinityX8_ShortSignals:
         )
 
         # TAG 701: Support Breakdown (Phá vỡ đáy Donchian 24 nến)
-        # Tối ưu: Bắt buộc nến đỏ, râu dưới ngắn (loại bẫy rút chân), đóng dưới EMA 9 & EMA 21
+        # Nâng cấp v6.0:
+        # - Bắt buộc nến đỏ, râu dưới ngắn (loại bẫy rút chân), đóng dưới EMA 9 & EMA 21
+        # - Chuẩn vol_spike_ratio >= 1.50 (xác nhận dòng tiền xả breakout thật sự, loại bẫy vol yếu như ZAMA)
+        # - Bắt buộc ribbon_spread >= 0.0012 (dải EMA 9-21 đang mở rộng phân kỳ giảm, chống sideway)
+        # - dist_ema50_1h <= -0.003 (giá phải nằm dưới cản 1H EMA 50 > 0.3%, tránh short ngay sát hỗ trợ như VVV)
         shift_low_24 = np.roll(rolling_low_24, 1)
+        ribbon_spread = (ema_21 - ema_9) / np.where(ema_21 == 0, 1e-9, ema_21)
         cond_701 = (
             (volume > 0)
             & (close < shift_low_24)                      # Đóng cửa phá vỡ hoàn toàn đáy 24 nến
@@ -330,8 +346,10 @@ class NostalgiaForInfinityX8_ShortSignals:
             & (lower_wick_ratio <= 0.30)                  # Râu dưới ngắn (áp lực bán duy trì, không rút chân)
             & (close < ema_9) & (close < ema_21)          # Nằm dưới EMA 9 và EMA 21
             & (ema_50 < ema_200)                          # Downtrend tổng thể
-            & (vol_spike_ratio >= 1.25)                   # Volume xả gia tăng
+            & (vol_spike_ratio >= 1.50)                   # NÂNG CẤP v6.0: Volume xả gia tăng đột biến
             & (vol_spike_ratio <= 5.0)                    # Loại bỏ volume dị biệt selling climax
+            & (ribbon_spread >= 0.0012)                   # NÂNG CẤP v6.0: Dải EMA đang mở rộng phân kỳ giảm
+            & (dist_ema50_1h <= -0.003)                   # NÂNG CẤP v6.0: Đã xuyên thủng cản 1H EMA 50 > 0.3%
             & (rsi_14 > 28.0) & (rsi_14 < 46.0)           # Đang có quán tính giảm, chưa quá bán
             & (stochrsi_k >= 20.0)                        # Chống bán tháo ở đáy 5m
             & (~rsi_1h_oversold)                          # Không short khi 1h đã quá bán sâu < 30
@@ -346,7 +364,6 @@ class NostalgiaForInfinityX8_ShortSignals:
         # TAG 703: Bearish Moving Average Ribbon Expansion (Tối ưu hóa: kiểm soát độ dốc & mở rộng dải)
         shift_ema_9 = np.roll(ema_9, 1)
         shift_ema_21 = np.roll(ema_21, 1)
-        ribbon_spread = (ema_21 - ema_9) / np.where(ema_21 == 0, 1e-9, ema_21)
         cond_703 = (
             (volume > 0)
             & (ema_9 < ema_21)
@@ -476,16 +493,21 @@ class NostalgiaForInfinityX8_ShortSignals:
         )
 
         # TAG 724: EMA 50 Relief Bounce Rejection (Từ chối hồi kỹ thuật tại EMA 50)
+        # Nâng cấp v6.0:
+        # - Tuyệt đối không Short khi nến nằm trên 1H EMA 200 (~close_above_ema200_1h) -> triệt tiêu lệnh thua BAT -28$
+        # - Bắt buộc thân nến giảm thực sự body_ratio >= 0.20 (loại trừ nến Doji / do dự)
         shift_ema_50 = np.roll(ema_50, 1)
         prev_candle_green = np.roll(close, 1) > np.roll(open_px, 1)
         cond_724 = (
             (volume > 0)
             & (ema_50 < ema_200)                          # Downtrend tổng thể
+            & (~close_above_ema200_1h)                    # NÂNG CẤP v6.0: Không Short khi giá trên 1H EMA 200
             & (ema_50 < shift_ema_50)                     # EMA 50 đang dốc xuống xác nhận cản động
             & (high >= ema_50 * 0.9995)                   # Quét chạm hoặc vượt nhẹ qua EMA 50
             & (close < ema_50)                            # Đóng cửa bị đạp xuống dưới EMA 50
             & (close < ema_21)                            # Đóng nến dưới EMA 21 xác nhận lực xả
             & (close < open_px)                           # BẮT BUỘC NẾN ĐỎ
+            & (body_ratio >= 0.20)                        # NÂNG CẤP v6.0: Thân nến giảm rõ ràng (chống nến Doji)
             & (upper_wick_ratio >= 0.38)                  # Râu trên dài thể hiện áp lực bán từ chối
             & (vol_spike_ratio >= 1.25)                   # Volume xả xác nhận
             & (rsi_14 >= 44.0) & (rsi_14 <= 58.0)         # Vùng RSI hồi kỹ thuật điển hình
@@ -613,6 +635,7 @@ class NostalgiaForInfinityX8_ShortSignals:
             | trigger_bear_div
             | trigger_macro_breakdown
             | trigger_bb_rejection
+            | trigger_exhaustion
         ) & macro_bearish_regime
 
         # Gán nhãn các tag cho những cây nến ĐẠT TIÊU CHUẨN CONFLUENCE

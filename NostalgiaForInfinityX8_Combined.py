@@ -474,8 +474,8 @@ class NostalgiaForInfinityX8_Combined(NostalgiaForInfinityX8):
                         return False
 
                 # 5. Correlation / Market Breadth Guard (1h):
-                # Khi đã có >= 2 lệnh Short đang mở, kiểm tra xem BTC có đang hồi phục không:
-                if len(open_shorts) >= 2 and btc_close is not None and btc_ema21 is not None and btc_close > btc_ema21:
+                # Khi đã có >= 3 lệnh Short đang mở, kiểm tra xem BTC có đang hồi phục không:
+                if len(open_shorts) >= 3 and btc_close is not None and btc_ema21 is not None and btc_close > btc_ema21:
                     log.info(
                         "Market Breadth Guard (1h): Blocked %s short entry (%d active shorts & BTC 1h close %.1f > EMA21 %.1f at %s)",
                         pair, len(open_shorts), btc_close, btc_ema21, current_time,
@@ -483,7 +483,7 @@ class NostalgiaForInfinityX8_Combined(NostalgiaForInfinityX8):
                     return False
 
                 # Kiểm tra BTC 5m (nếu BTC 5m đang hồi dốc trên EMA 21)
-                if len(open_shorts) >= 2:
+                if len(open_shorts) >= 3:
                     btc_5m = self.dp.get_pair_dataframe(pair=btc_pair, timeframe="5m")
                     if btc_5m is not None and not btc_5m.empty and "date" in btc_5m.columns:
                         btc_past_5m = btc_5m[btc_5m["date"] <= cur_ts]

@@ -134,5 +134,9 @@
       "WIF/USDT:USDT",
       "1000BONK/USDT:USDT"
     ]
-  }
+  },
+  "disabled_custom_short_tags": [
+    "724 731",
+    "701 703 731"
+  ]
 }
