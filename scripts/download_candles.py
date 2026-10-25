@@ -128,6 +128,7 @@ def process_pair_timeframe(
     output_dir: Path,
     max_workers: int = 8,
 ):
+    pair_filename_base = pair.replace("/", "_").replace(":", "_")
     target_file = output_dir / f"{pair_filename_base}-{tf}.parquet"
     target_feather = output_dir / f"{pair_filename_base}-{tf}.feather"
 
