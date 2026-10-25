@@ -24,6 +24,6 @@
     "SUI/USDT",
     "INJ/USDT"
   ],
-  "r2_bucket": "freqtrade-data",
+  "r2_bucket": "goclaw-data",
   "r2_prefix": "binance"
 }

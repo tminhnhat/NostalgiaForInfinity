@@ -38,26 +38,30 @@ jobs:
 
       - name: Configure Rclone for Cloudflare R2
         env:
+          R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
           R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
-          R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-          R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+          R2_ACCESS_KEY: ${{ secrets.R2_ACCESS_KEY || secrets.R2_ACCESS_KEY_ID }}
+          R2_SECRET_KEY: ${{ secrets.R2_SECRET_KEY || secrets.R2_SECRET_ACCESS_KEY }}
+          R2_REGION: ${{ secrets.R2_REGION || 'auto' }}
         run: |
           mkdir -p ~/.config/rclone
+          ENDPOINT="${R2_ENDPOINT:-https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com}"
           cat <<EOF > ~/.config/rclone/rclone.conf
           [r2]
           type = s3
           provider = Cloudflare
-          access_key_id = ${R2_ACCESS_KEY_ID}
-          secret_access_key = ${R2_SECRET_ACCESS_KEY}
-          endpoint = https://${R2_ACCOUNT_ID}.r2.cloudflarestorage.com
+          access_key_id = ${R2_ACCESS_KEY}
+          secret_access_key = ${R2_SECRET_KEY}
+          endpoint = ${ENDPOINT}
+          region = ${R2_REGION}
           acl = private
           EOF
           chmod 600 ~/.config/rclone/rclone.conf
-          echo "✅ Rclone configured for Cloudflare R2 endpoint."
+          echo "✅ Rclone configured for Cloudflare R2 endpoint: ${ENDPOINT}"
 
       - name: Pull Existing Data from Cloudflare R2 (Incremental Sync Cache)
         env:
-          R2_BUCKET: ${{ secrets.R2_BUCKET_NAME || 'freqtrade-data' }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET || secrets.R2_BUCKET_NAME || 'goclaw-data' }}
         run: |
           mkdir -p user_data/data/binance
           echo "Pulling existing parquet files from r2:${R2_BUCKET}/binance..."
@@ -74,9 +78,9 @@ jobs:
 
       - name: Sync Updated Candles to Cloudflare R2
         env:
-          R2_BUCKET: ${{ secrets.R2_BUCKET_NAME || 'freqtrade-data' }}
+          R2_BUCKET: ${{ secrets.R2_BUCKET || secrets.R2_BUCKET_NAME || 'goclaw-data' }}
         run: |
-          echo "Syncing updated parquet candles to Cloudflare R2 (freqtrade-data)..."
+          echo "Syncing updated parquet candles to Cloudflare R2 (${R2_BUCKET})..."
           rclone sync user_data/data/binance "r2:${R2_BUCKET}/binance" \
             --fast-list \
             --transfers=8 \
