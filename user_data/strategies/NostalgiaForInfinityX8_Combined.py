@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 NostalgiaForInfinityX8_Combined
+Version: v6.1 + CustomShortSignals_v6.1_Layer1_Layer2 + AsymmetricSmartDCA
 Wrapper Strategy combining NostalgiaForInfinityX8 with modular custom Short logic.
 """
 import logging
@@ -37,7 +38,7 @@ class NostalgiaForInfinityX8_Combined(NostalgiaForInfinityX8):
 
     def version(self) -> str:
         base_ver = super().version()
-        return f"{base_ver} + CustomShortSignals_v3.6.3_Layer1_Layer2 + AsymmetricSmartDCA"
+        return f"{base_ver} + CustomShortSignals_v6.1_Layer1_Layer2 + AsymmetricSmartDCA"
 
     def __init__(self, config: dict) -> None:
         super().__init__(config)

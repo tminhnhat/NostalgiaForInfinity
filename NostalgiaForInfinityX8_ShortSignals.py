@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 NostalgiaForInfinityX8_ShortSignals
+Version: v6.1
 Modular Advanced Short Entry & Exit Strategy for Crypto Futures.
 
 THIS MODULE ADDS BRAND NEW, QUANTITATIVE SHORT STRATEGIES INDEPENDENT OF NOSTALGIA:
