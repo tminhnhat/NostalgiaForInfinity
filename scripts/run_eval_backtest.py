@@ -22,7 +22,7 @@ def main():
     parser.add_argument("--strategy", type=str, default="NostalgiaForInfinityX8")
     parser.add_argument("--days", type=int, default=30)
     parser.add_argument("--config", type=Path, default=Path("configs/exampleconfig.json"))
-    parser.add_argument("--pairlist", type=Path, default=Path("configs/pairlist-backtest-static-binance-spot-usdt.json"))
+    parser.add_argument("--pairlist", type=Path, default=Path("configs/eval_pairs.json"))
     args = parser.parse_args()
 
     now_utc = datetime.now(timezone.utc)

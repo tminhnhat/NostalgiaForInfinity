@@ -128,8 +128,8 @@ def process_pair_timeframe(
     output_dir: Path,
     max_workers: int = 8,
 ):
-    pair_filename_base = pair.replace("/", "_").replace(":", "_")
     target_file = output_dir / f"{pair_filename_base}-{tf}.parquet"
+    target_feather = output_dir / f"{pair_filename_base}-{tf}.feather"
 
     dfs = []
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
@@ -160,6 +160,10 @@ def process_pair_timeframe(
 
     target_file.parent.mkdir(parents=True, exist_ok=True)
     combined.to_parquet(target_file, compression="snappy", index=False)
+    try:
+        combined.to_feather(target_feather)
+    except Exception as e:
+        logger.debug(f"Could not save feather: {e}")
     logger.info(f"Saved {target_file.name} (candles: {len(combined)})")
 
 
