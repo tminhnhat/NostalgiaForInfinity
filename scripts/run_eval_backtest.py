@@ -19,7 +19,7 @@ sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 def main():
     parser = argparse.ArgumentParser(description="Run evaluation backtest")
-    parser.add_argument("--strategy", type=str, default="NostalgiaForInfinityX8")
+    parser.add_argument("--strategy", type=str, default="NostalgiaForInfinityX8_Combined_AI")
     parser.add_argument("--days", type=int, default=30)
     parser.add_argument("--config", type=Path, default=Path("configs/backtest_config.json"))
     parser.add_argument("--pairlist", type=Path, default=None)

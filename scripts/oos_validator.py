@@ -25,12 +25,11 @@ logging.basicConfig(
 logger = logging.getLogger("OOSValidator")
 
 
-def run_freqtrade_backtest(timerange: str, strategy: str = "NostalgiaForInfinityX8") -> Path | None:
+def run_freqtrade_backtest(timerange: str, strategy: str = "NostalgiaForInfinityX8_Combined_AI") -> Path | None:
     """Run Freqtrade backtest for the OOS timerange."""
     cmd = [
         "freqtrade", "backtesting",
-        "--config", "configs/exampleconfig.json",
-        "--config", "configs/pairlist-backtest-static-binance-spot-usdt.json",
+        "--config", "configs/backtest_config.json",
         "--strategy", strategy,
         "--strategy-path", ".",
         "--timerange", timerange,
