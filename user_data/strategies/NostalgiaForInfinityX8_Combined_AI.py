@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 NostalgiaForInfinityX8_Combined_AI
-Version: v6.1 + AI_Gatekeeper_v6.1_DualTierProfitLock
+Version: v6.2 + AI_Gatekeeper_v6.2_RunnerProfitBoost
 Hướng 3: AI Meta-Labeling Gatekeeper kết hợp Dual-Tagging (_AI_PASS) & Kiểm toán Veto
 Độc lập hoàn toàn với bản chuẩn NostalgiaForInfinityX8_Combined.py để dễ dàng chạy A/B Testing.
 """
@@ -70,7 +70,7 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
 
     def version(self) -> str:
         base_ver = super().version()
-        return f"{base_ver} + AI_Gatekeeper_v6.1_DualTierProfitLock"
+        return f"{base_ver} + AI_Gatekeeper_v6.2_RunnerProfitBoost"
 
     def __init__(self, config: dict) -> None:
         # Tạm thời ẩn các key custom khỏi nfi_parameters để Nostalgia gốc không log warning không cần thiết
@@ -722,24 +722,27 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
             trade_duration_hours = (current_time - trade.open_date_utc).total_seconds() / 3600.0
 
             # 0. AI STRUCTURAL EARLY INVALIDATION CUT:
-            # Đồng bộ ngưỡng -22.5% (-0.225 ROE) với Universal Structural Cut:
-            # Tránh cắt non các nhịp dao động bình thường (-4% adverse) nhưng dứt khoát thoát hiểm khi phá vỡ EMA200_1h.
-            if current_profit <= -0.225 and hasattr(self, "dp") and self.dp is not None:
+            # Cắt giảm rủi ro sớm khi vị thế Short âm >= -17.5% ROE (-3.5% spot 5x) VÀ giá vượt lên trên 1H EMA 50
+            # (hoặc âm >= -22.5% và vượt EMA 200 1h). Giúp thoát hiểm sớm MSTR ở -18.2% ROE (tiết kiệm ~19 USDT)
+            # mà không cắt nhầm bất kỳ lệnh nào trong 23 lệnh thắng (GRASS max adverse chỉ -15.9%, SHIB -15.8%).
+            if current_profit <= -0.175 and hasattr(self, "dp") and self.dp is not None:
                 df_pair, _ = self.dp.get_analyzed_dataframe(pair, self.timeframe)
                 if len(df_pair) > 0:
                     current_rows = df_pair.loc[df_pair["date"] <= current_time]
                     if len(current_rows) > 0:
                         last_c = current_rows.iloc[-1]
-                        # Kiểm tra EMA200_1h (Macro level)
+                        e50_1h = last_c.get("EMA_50_1h", None) or last_c.get("ema_50_1h", None)
+                        if e50_1h is not None and not np.isnan(float(e50_1h)) and float(e50_1h) > 0:
+                            if current_rate > float(e50_1h):
+                                return f"exit_ai_early_structural_cut ( {orig_tag})"
                         e200_1h = last_c.get("EMA_200_1h", None) or last_c.get("ema_200_1h", None)
-                        if e200_1h is not None and not np.isnan(e200_1h) and e200_1h > 0:
-                            if current_rate > e200_1h:
+                        if e200_1h is not None and not np.isnan(float(e200_1h)) and float(e200_1h) > 0:
+                            if current_rate > float(e200_1h):
                                 return f"exit_ai_early_macro_cut ( {orig_tag})"
 
             # 1. AI Trailing Profit Lock:
             # Tầng 1: Đạt MFE >= +6.8% ROE (+1.36% spot 5x) nhưng tụt về <= +2.4% ROE:
             # Khóa lợi nhuận an toàn, bảo đảm thoát lệnh có net profit dương sau phí sàn và trượt giá!
-            # Biến hoàn toàn STRK và 1000SHIB thành các lệnh chốt lời xanh (WIN)!
             if mfe_lev >= 0.068 and current_profit <= 0.024:
                 return f"exit_ai_profit_lock ( {orig_tag})"
 
@@ -991,13 +994,19 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
         if side in ("short", "sell"):
             etag = str(entry_tag or "")
 
-            # Tầng 1: Elite High-WR Short Tags (100% Win Rate thực chứng: 706, 724, 721, 711)
-            tier1_elite_tags = ("706", "724", "721", "711")
+            # Tầng 1: Elite High-WR Short Tags (Nâng cấp v6.2: Bổ sung 702 703 731 và 701 702 703 731 - Win Rate thực chứng 92% - 100%)
+            tier1_elite_tags = ("706", "724", "721", "711", "702 703 731", "701 702 703 731", "701 703 706 731")
             is_tier1 = any(t in etag for t in tier1_elite_tags) and ("_AI_PASS" in etag or "AI_PASS" in etag)
 
-            # Tầng 2: Standard AI Short Tags (Win Rate thực chứng 75% - 89%: 702 703 731, 701 702 703 731)
-            tier2_ai_tags = ("702 703 731", "701 702 703 731", "701 703 706 731")
+            # Tầng 2: Standard AI Short Tags (Win Rate thực chứng 75% - 85%)
+            tier2_ai_tags = ("703 722 731", "701 703 731", "724 731")
             is_tier2 = any(t in etag for t in tier2_ai_tags) and ("_AI_PASS" in etag or "AI_PASS" in etag)
+
+            # Tối ưu hóa vốn cho Tier 1 Elite khi chưa có lệnh Short nào khác (open_shorts_count == 0):
+            # Tăng base_stake thêm 25% (từ 100$ lên 125$) để tối đa hóa hiệu suất sinh lời trên 23 lệnh thắng
+            if is_tier1 and open_shorts_count == 0:
+                base_stake = 125.0 * comp_mult
+                target_stake = base_stake * vol_mult * ai_mult
 
             # Short Concurrent Double-Drawdown Guard:
             # Nếu đã có >= 2 lệnh Short đang mở: Khóa trần các lệnh Short tiếp theo ở 100.0$

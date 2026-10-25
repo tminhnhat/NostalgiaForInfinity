@@ -413,6 +413,11 @@ class NostalgiaForInfinityX8_Combined(NostalgiaForInfinityX8):
 
                 # Kiểm tra BTC 1h
                 btc_df_1h = self.dp.get_pair_dataframe(pair=btc_pair, timeframe="1h")
+                if (btc_df_1h is None or btc_df_1h.empty) and os.path.exists("user_data/data/binance/futures/BTC_USDT_USDT-1h-futures.feather"):
+                    if not hasattr(self, "_cached_btc_1h_df"):
+                        self._cached_btc_1h_df = pd.read_feather("user_data/data/binance/futures/BTC_USDT_USDT-1h-futures.feather")
+                    btc_df_1h = self._cached_btc_1h_df
+
                 btc_close = None
                 btc_ema21 = None
                 btc_rsi1h = None
@@ -425,6 +430,11 @@ class NostalgiaForInfinityX8_Combined(NostalgiaForInfinityX8):
 
                 # Kiểm tra BTC 15m
                 btc_df_15m = self.dp.get_pair_dataframe(pair=btc_pair, timeframe="15m")
+                if (btc_df_15m is None or btc_df_15m.empty) and os.path.exists("user_data/data/binance/futures/BTC_USDT_USDT-15m-futures.feather"):
+                    if not hasattr(self, "_cached_btc_15m_df"):
+                        self._cached_btc_15m_df = pd.read_feather("user_data/data/binance/futures/BTC_USDT_USDT-15m-futures.feather")
+                    btc_df_15m = self._cached_btc_15m_df
+
                 btc_rsi15m = None
                 if btc_df_15m is not None and not btc_df_15m.empty and "date" in btc_df_15m.columns:
                     btc_past_15m = btc_df_15m[btc_df_15m["date"] <= cur_ts]
