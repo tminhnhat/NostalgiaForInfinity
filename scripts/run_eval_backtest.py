@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 from datetime import datetime, timedelta, timezone
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -20,17 +21,28 @@ sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 def main():
     parser = argparse.ArgumentParser(description="Run evaluation backtest")
     parser.add_argument("--strategy", type=str, default="NostalgiaForInfinityX8_Combined_AI")
-    parser.add_argument("--days", type=int, default=30)
+    parser.add_argument("--days", type=int, default=None)
     parser.add_argument("--config", type=Path, default=Path("configs/backtest_config.json"))
     parser.add_argument("--pairlist", type=Path, default=None)
     args = parser.parse_args()
 
+    days = 180
+    if args.days is not None:
+        days = args.days
+    elif args.config and args.config.exists():
+        try:
+            with open(args.config, "r", encoding="utf-8") as f:
+                cfg = json.load(f)
+                days = int(cfg.get("backtest_days", 180))
+        except Exception:
+            days = 180
+
     now_utc = datetime.now(timezone.utc)
-    start_date = (now_utc - timedelta(days=args.days)).strftime("%Y%m%d")
+    start_date = (now_utc - timedelta(days=days)).strftime("%Y%m%d")
     end_date = now_utc.strftime("%Y%m%d")
     timerange = f"{start_date}-{end_date}"
 
-    print(f"🎯 Evaluation Window: {timerange} ({args.days} days)")
+    print(f"🎯 Evaluation Window: {timerange} ({days} days)")
     print(f"🚀 Strategy: {args.strategy}")
     print(f"⚙️ Config: {args.config}")
 

@@ -180,11 +180,12 @@ def main():
     parser = argparse.ArgumentParser(description="Download Binance candles for Freqtrade")
     parser.add_argument("--config", type=Path, default=Path("configs/backtest_config.json"))
     parser.add_argument("--output-dir", type=Path, default=Path("user_data/data/binance"))
-    parser.add_argument("--days", type=int, default=30, help="Days of history to download")
+    parser.add_argument("--days", type=int, default=None, help="Days of history to download")
     parser.add_argument("--workers", type=int, default=16, help="Parallel download threads")
     args = parser.parse_args()
 
     cfg = load_config(args.config)
+    days = args.days if args.days is not None else int(cfg.get("backtest_days", 180))
     trading_mode = cfg.get("trading_mode", cfg.get("market_type", "spot"))
     is_futures = (trading_mode == "futures")
     market = "futures/um" if is_futures else "spot"
@@ -195,11 +196,11 @@ def main():
     now_utc = datetime.now(timezone.utc)
     dates_to_fetch = [
         (now_utc - timedelta(days=d)).strftime("%Y-%m-%d")
-        for d in range(1, args.days + 1)
+        for d in range(1, days + 1)
     ]
 
     logger.info(f"Configuration: mode={trading_mode}, market={market}")
-    logger.info(f"Starting download for {len(pairs)} pairs across {len(timeframes)} timeframes ({args.days} days)...")
+    logger.info(f"Starting download for {len(pairs)} pairs across {len(timeframes)} timeframes ({days} days)...")
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
     for pair in pairs:

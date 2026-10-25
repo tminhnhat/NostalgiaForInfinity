@@ -1,6 +1,7 @@
 {
   "strategy": "NostalgiaForInfinityX8_Combined_AI",
   "strategy_path": ".",
+  "backtest_days": 180,
   "max_open_trades": 10,
   "stake_currency": "USDT",
   "stake_amount": 100,
