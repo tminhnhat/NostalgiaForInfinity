@@ -1,0 +1,38 @@
+name: Production Live Deployment & Alert
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'NostalgiaForInfinityX8*.py'
+      - 'configs/**'
+  workflow_dispatch:
+
+jobs:
+  deploy_production:
+    name: Hot-Reload Live Freqtrade Bot & Notify Telegram
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Execute Live Reload & Dispatch Telegram Alert
+        env:
+          FREQTRADE_API_URL: ${{ secrets.FREQTRADE_API_URL }}
+          FREQTRADE_API_USERNAME: ${{ secrets.FREQTRADE_API_USERNAME }}
+          FREQTRADE_API_PASSWORD: ${{ secrets.FREQTRADE_API_PASSWORD }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
+        run: |
+          python scripts/deploy_live.py \
+            --commit-sha "${{ github.sha }}" \
+            --commit-msg "${{ github.event.head_commit.message || 'Manual dispatch deployment' }}" \
+            --actor "${{ github.actor }}"

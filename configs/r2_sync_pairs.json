@@ -1,0 +1,29 @@
+{
+  "exchange": "binance",
+  "market_type": "spot",
+  "timeframes": ["5m", "15m", "1h", "4h", "1d"],
+  "pairs": [
+    "BTC/USDT",
+    "ETH/USDT",
+    "BNB/USDT",
+    "SOL/USDT",
+    "XRP/USDT",
+    "ADA/USDT",
+    "AVAX/USDT",
+    "DOGE/USDT",
+    "DOT/USDT",
+    "NEAR/USDT",
+    "LINK/USDT",
+    "MATIC/USDT",
+    "LTC/USDT",
+    "UNI/USDT",
+    "ATOM/USDT",
+    "APT/USDT",
+    "ARB/USDT",
+    "OP/USDT",
+    "SUI/USDT",
+    "INJ/USDT"
+  ],
+  "r2_bucket": "freqtrade-data",
+  "r2_prefix": "binance"
+}
