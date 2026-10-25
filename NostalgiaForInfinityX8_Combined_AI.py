@@ -70,7 +70,7 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
 
     def version(self) -> str:
         base_ver = super().version()
-        return f"{base_ver} + AI_Gatekeeper_v6.2_RunnerProfitBoost"
+        return f"{base_ver} + AI_Gatekeeper_v6.3_Tag562_Precision"
 
     def __init__(self, config: dict) -> None:
         # Tạm thời ẩn các key custom khỏi nfi_parameters để Nostalgia gốc không log warning không cần thiết
@@ -516,6 +516,31 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
         # 1. Chạy tín hiệu Nostalgia gốc (Tất cả Long & Short gốc như 562)
         df = NostalgiaForInfinityX8.populate_entry_trend(self, df, metadata)
 
+        # 1.1. AI Gatekeeper VETO cho tín hiệu Short Tag 562 gốc (Chống bẫy Late Breakdown Squeeze)
+        # Khi coin đã rơi quá sâu (dist_e50_1h <= -4.4%) nhưng BTC 4h không rơi tự do (>= -2.0%):
+        # Veto tín hiệu để ngăn chặn bẫy Short Squeeze (triệt tiêu 3 cú sụt lớn nhất JTO, PUMP, ZEC).
+        if self.ai_gatekeeper_enabled and "enter_short" in df.columns:
+            short_mask = (df["enter_short"] == 1).to_numpy()
+            if np.any(short_mask):
+                tags_raw = df["enter_tag"].fillna("").astype(str).to_numpy()
+                is_562 = np.array([("562" in t.split()) for t in tags_raw]) & short_mask
+                if np.any(is_562) and "ai_feat_pair_dist_ema50_1h" in df.columns and "ai_feat_btc_dist_ema200_4h" in df.columns:
+                    dist_e50_1h = df["ai_feat_pair_dist_ema50_1h"].to_numpy()
+                    btc_d4 = df["ai_feat_btc_dist_ema200_4h"].to_numpy()
+                    late_squeeze = is_562 & (dist_e50_1h <= -0.044) & (btc_d4 >= -0.020)
+                    if np.any(late_squeeze):
+                        df.loc[late_squeeze, "enter_short"] = 0
+                        df.loc[late_squeeze, "enter_tag"] = ""
+                        pair = metadata.get("pair", "UNKNOWN")
+                        dates = df.loc[late_squeeze, "date"].to_numpy()
+                        for d in dates:
+                            self.veto_audit_records.append({
+                                "date": str(d),
+                                "pair": pair,
+                                "tag": "562",
+                                "status": "VETOED_TAG562_LATE_SQUEEZE"
+                            })
+
         # 2. Chạy tín hiệu Short custom của module Combined
         df = self.short_strategy.populate_entry_trend(df, metadata)
 
@@ -771,6 +796,19 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
             # Thoát vị thế trôi dạt để giải phóng margin và bảo vệ tài khoản:
             if trade_duration_hours >= 36.0 and current_profit <= 0.004:
                 return f"exit_ai_drift_decay ( {orig_tag})"
+
+        # =========================================================================
+        # 2.5. AI AGED BREAKEVEN LOCK CHO TAG 562
+        # =========================================================================
+        # Nếu lệnh Tag 562 đã từng đạt MFE >= +8.0% ROE (+1.6% spot 5x) nhưng sau >= 36h
+        # không thể tiếp tục mở rộng đà rơi và lợi nhuận tụt về <= 0.0% ROE:
+        # Khóa hòa vốn ngay để giải phóng vốn và ngăn chặn RENDER (-32.5$) trôi dạt suốt 4 ngày!
+        if trade.is_short and "562" in orig_tag:
+            min_r = trade.min_rate if trade.min_rate is not None else open_rate
+            mfe_lev = (open_rate - min_r) / open_rate * leverage
+            trade_duration_hours = (current_time - trade.open_date_utc).total_seconds() / 3600.0
+            if trade_duration_hours >= 36.0 and mfe_lev >= 0.080 and current_profit <= 0.000:
+                return f"exit_ai_562_aged_breakeven ( {orig_tag})"
 
         # Chuyển tiếp vào pipeline custom_exit của Combined & Nostalgia gốc
         if orig_tag and "_AI_PASS" in orig_tag:
