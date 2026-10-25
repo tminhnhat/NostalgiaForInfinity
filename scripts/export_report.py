@@ -88,14 +88,23 @@ def generate_markdown(strat_name: str, s: dict, date_str: str) -> str:
     # Enter tag statistics
     tag_rows = []
     results_per_tag = s.get("results_per_enter_tag", {})
+    tag_items = []
     if isinstance(results_per_tag, dict):
+        tag_items = list(results_per_tag.items())
+    elif isinstance(results_per_tag, list):
+        for item in results_per_tag:
+            if isinstance(item, dict):
+                tag_name = item.get("key") or item.get("tag") or item.get("enter_tag") or "unknown"
+                tag_items.append((tag_name.strip(), item))
+
+    if tag_items:
         # Sort by total profit ascending to immediately expose worst-performing conditions
         sorted_tags = sorted(
-            results_per_tag.items(),
+            tag_items,
             key=lambda x: x[1].get("profit_total_abs", 0.0) if isinstance(x[1], dict) else 0.0,
         )
         for tag, stats in sorted_tags[:15]:  # Top 15 worst/interesting tags
-            t_trades = stats.get("total_trades", 0)
+            t_trades = stats.get("total_trades") or stats.get("trades") or 0
             t_winrate = (stats.get("winrate", 0.0) or 0.0) * 100
             t_profit_pct = (stats.get("profit_total", 0.0) or 0.0) * 100
             t_profit_abs = stats.get("profit_total_abs", 0.0) or 0.0

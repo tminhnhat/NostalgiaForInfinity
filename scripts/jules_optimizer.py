@@ -91,15 +91,26 @@ def find_weakest_conditions(latest_run: dict) -> list[dict]:
     """Isolate tags/signals with poor winrate or negative expectancy."""
     tags = latest_run.get("results_per_enter_tag", {})
     underperforming = []
-    for tag, stats in tags.items():
+
+    # Handle both dict and list representation from Freqtrade backtest result
+    tag_items = []
+    if isinstance(tags, dict):
+        tag_items = list(tags.items())
+    elif isinstance(tags, list):
+        for item in tags:
+            if isinstance(item, dict):
+                tag_name = item.get("key") or item.get("tag") or item.get("enter_tag") or "unknown"
+                tag_items.append((tag_name, item))
+
+    for tag, stats in tag_items:
         if not isinstance(stats, dict):
             continue
-        trades = stats.get("total_trades", 0)
+        trades = stats.get("total_trades") or stats.get("trades") or 0
         winrate = (stats.get("winrate", 0.0) or 0.0) * 100
         profit_abs = stats.get("profit_total_abs", 0.0) or 0.0
         if trades >= 3 and (winrate < 70.0 or profit_abs < 0):
             underperforming.append({
-                "tag": tag,
+                "tag": tag.strip(),
                 "trades": trades,
                 "winrate": winrate,
                 "profit_abs": profit_abs,
