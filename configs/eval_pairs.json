@@ -1,6 +1,11 @@
 {
   "dataformat_ohlcv": "parquet",
   "dataformat_trades": "parquet",
+  "pairlists": [
+    {
+      "method": "StaticPairList"
+    }
+  ],
   "exchange": {
     "name": "binance",
     "pair_whitelist": [
