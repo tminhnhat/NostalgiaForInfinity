@@ -21,8 +21,8 @@ def main():
     parser = argparse.ArgumentParser(description="Run evaluation backtest")
     parser.add_argument("--strategy", type=str, default="NostalgiaForInfinityX8")
     parser.add_argument("--days", type=int, default=30)
-    parser.add_argument("--config", type=Path, default=Path("configs/exampleconfig.json"))
-    parser.add_argument("--pairlist", type=Path, default=Path("configs/eval_pairs.json"))
+    parser.add_argument("--config", type=Path, default=Path("configs/backtest_config.json"))
+    parser.add_argument("--pairlist", type=Path, default=None)
     args = parser.parse_args()
 
     now_utc = datetime.now(timezone.utc)
@@ -32,20 +32,26 @@ def main():
 
     print(f"🎯 Evaluation Window: {timerange} ({args.days} days)")
     print(f"🚀 Strategy: {args.strategy}")
+    print(f"⚙️ Config: {args.config}")
 
     # Build backtesting command
     cmd = [
         "freqtrade",
         "backtesting",
         "--config", str(args.config),
-        "--config", str(args.pairlist),
+    ]
+
+    if args.pairlist and args.pairlist.exists():
+        cmd.extend(["--config", str(args.pairlist)])
+
+    cmd.extend([
         "--strategy", args.strategy,
         "--strategy-path", ".",
         "--timerange", timerange,
         "--timeframe", "5m",
         "--export", "trades",
         "--breakdown", "day",
-    ]
+    ])
 
     print(f"Executing: {' '.join(cmd)}")
     result = subprocess.run(cmd, check=False)

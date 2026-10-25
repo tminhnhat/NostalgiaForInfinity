@@ -52,7 +52,7 @@ jobs:
       - name: Download Target Candles from Binance Vision
         run: |
           python scripts/download_candles.py \
-            --config configs/eval_pairs.json \
+            --config configs/backtest_config.json \
             --days ${{ github.event.inputs.days || 30 }} \
             --output-dir user_data/data/binance \
             --workers 16
@@ -64,6 +64,7 @@ jobs:
       - name: Execute Freqtrade Backtest on Runner & Export Report
         run: |
           python scripts/run_eval_backtest.py \
+            --config configs/backtest_config.json \
             --strategy NostalgiaForInfinityX8 \
             --days ${{ github.event.inputs.days || 30 }}
 
