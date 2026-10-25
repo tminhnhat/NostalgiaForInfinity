@@ -32,24 +32,15 @@ jobs:
           python-version: '3.11'
           cache: 'pip'
 
-      - name: Cache TA-Lib C Library
-        id: cache-talib
-        uses: actions/cache@v4
-        with:
-          path: |
-            /usr/include/ta-lib
-            /usr/lib/libta_lib*
-          key: talib-c-v0.4.0
-
-      - name: Compile and Install TA-Lib C Library
-        if: steps.cache-talib.outputs.cache-hit != 'true'
+      - name: Install TA-Lib C Library
         run: |
           wget -q http://prdownloads.sourceforge.net/ta-lib/ta-lib-0.4.0-src.tar.gz
           tar -xzf ta-lib-0.4.0-src.tar.gz
           cd ta-lib/
           ./configure --prefix=/usr
-          make -j$(nproc)
+          make
           sudo make install
+          sudo ldconfig
           cd ..
           rm -rf ta-lib ta-lib-0.4.0-src.tar.gz
 
