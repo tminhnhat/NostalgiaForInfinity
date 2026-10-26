@@ -16,6 +16,7 @@ import subprocess
 import sys
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+os.environ["PYTHONUTF8"] = "1"
 
 
 def main():
@@ -66,14 +67,15 @@ def main():
     ])
 
     print(f"Executing: {' '.join(cmd)}")
-    result = subprocess.run(cmd, check=False)
+    sub_env = dict(os.environ, PYTHONUTF8="1")
+    result = subprocess.run(cmd, check=False, env=sub_env)
     if result.returncode != 0:
         print(f"❌ Backtest failed with code {result.returncode}")
         sys.exit(result.returncode)
 
     print("📊 Exporting metrics and generating reports/latest_report.md...")
     export_cmd = [sys.executable, "scripts/export_report.py", "--strategy", args.strategy]
-    export_res = subprocess.run(export_cmd, check=False)
+    export_res = subprocess.run(export_cmd, check=False, env=sub_env)
     if export_res.returncode != 0:
         print(f"⚠️ Report export warning (code {export_res.returncode})")
 
