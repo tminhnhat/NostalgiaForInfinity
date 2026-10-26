@@ -1,0 +1,185 @@
+name: Jules Proposal PR Backtest & Benchmark Validation
+
+'on':
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches:
+      - main
+    paths:
+      - 'user_data/strategies/**'
+      - 'configs/**'
+      - 'NostalgiaForInfinityX8_Combined_AI.py'
+  issue_comment:
+    types: [created]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 'Pull Request number to backtest & benchmark'
+        required: false
+        default: ''
+      days:
+        description: 'Number of rolling days to evaluate'
+        required: false
+        default: '180'
+      strategy:
+        description: 'Strategy to backtest'
+        required: false
+        default: 'NostalgiaForInfinityX8_Combined_AI'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.event.issue.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+
+jobs:
+  backtest_jules_proposal:
+    name: Backtest Jules Proposed Code & Quant Gatekeeper Audit
+    # Run if:
+    # 1. pull_request event
+    # 2. workflow_dispatch event
+    # 3. issue_comment event on a PR with /backtest or /test-proposal
+    if: |
+      github.event_name == 'pull_request' ||
+      github.event_name == 'workflow_dispatch' ||
+      (
+        github.event_name == 'issue_comment' &&
+        github.event.issue.pull_request != null &&
+        (startsWith(github.event.comment.body, '/backtest') || startsWith(github.event.comment.body, '/test-proposal'))
+      )
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Resolve PR Context & Authorization
+        id: context
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          COMMENT_USER: ${{ github.event.comment.user.login }}
+          REPO_OWNER: ${{ github.repository_owner }}
+          GH_TOKEN: ${{ secrets.GH_PAT_TOKEN || secrets.GITHUB_TOKEN }}
+        run: |
+          PR_NUM=""
+          PR_BRANCH=""
+
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            PR_NUM="${{ github.event.pull_request.number }}"
+            PR_BRANCH="${{ github.event.pull_request.head.ref }}"
+            echo "Triggered by Pull Request #$PR_NUM on branch $PR_BRANCH"
+          elif [ "$EVENT_NAME" = "issue_comment" ]; then
+            if [ "$COMMENT_USER" != "$REPO_OWNER" ] && [ "$COMMENT_USER" != "tminhnhat" ]; then
+              echo "::error::Unauthorized user $COMMENT_USER tried to trigger backtest command."
+              exit 1
+            fi
+            PR_NUM="${{ github.event.issue.number }}"
+            PR_BRANCH=$(gh pr view "$PR_NUM" --json headRefName -q .headRefName)
+            echo "Authorized comment on PR #$PR_NUM (branch: $PR_BRANCH)"
+          elif [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            PR_NUM="${{ github.event.inputs.pr_number }}"
+            if [ -n "$PR_NUM" ]; then
+              PR_BRANCH=$(gh pr view "$PR_NUM" --json headRefName -q .headRefName)
+            else
+              PR_BRANCH="${{ github.ref_name }}"
+            fi
+            echo "Manual workflow dispatch for PR: $PR_NUM (branch: $PR_BRANCH)"
+          fi
+
+          echo "pr_number=$PR_NUM" >> $GITHUB_OUTPUT
+          echo "pr_branch=$PR_BRANCH" >> $GITHUB_OUTPUT
+
+      - name: React to Command Comment with Eyes Emoji
+        if: github.event_name == 'issue_comment'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.reactions.createForIssueComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              comment_id: context.payload.comment.id,
+              content: 'eyes'
+            });
+
+      - name: Checkout Proposed Code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.context.outputs.pr_branch || github.ref }}
+          fetch-depth: 0
+          token: ${{ secrets.GH_PAT_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install TA-Lib C Library
+        run: |
+          wget -q http://prdownloads.sourceforge.net/ta-lib/ta-lib-0.4.0-src.tar.gz
+          tar -xzf ta-lib-0.4.0-src.tar.gz
+          cd ta-lib/
+          ./configure --prefix=/usr
+          make
+          sudo make install
+          sudo ldconfig
+          cd ..
+          rm -rf ta-lib ta-lib-0.4.0-src.tar.gz
+
+      - name: Install Python Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install TA-Lib freqtrade pyarrow fastparquet pandas lightgbm joblib scikit-learn
+
+      - name: Download Target Candles from Binance Vision
+        run: |
+          python scripts/download_candles.py \
+            --config configs/backtest_config.json \
+            --days ${{ github.event.inputs.days || 180 }} \
+            --output-dir user_data/data/binance \
+            --workers 16
+
+      - name: Apply Offline Markets Patch (Bypass US IP 451)
+        run: |
+          python scripts/patch_offline_markets.py
+
+      - name: Execute Backtest on Proposed Code
+        env:
+          PYTHONUTF8: "1"
+        run: |
+          python scripts/run_eval_backtest.py \
+            --config configs/backtest_config.json \
+            --strategy ${{ github.event.inputs.strategy || 'NostalgiaForInfinityX8_Combined_AI' }} \
+            --days ${{ github.event.inputs.days || 180 }}
+
+      - name: Evaluate Proposal Alpha & Post Report to PR
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT_TOKEN || secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.GH_PAT_TOKEN || secrets.GITHUB_TOKEN }}
+          PR_NUMBER: ${{ steps.context.outputs.pr_number }}
+        run: |
+          python scripts/evaluate_pr_proposal.py \
+            --pr-number "${{ steps.context.outputs.pr_number }}" \
+            --branch "${{ steps.context.outputs.pr_branch }}"
+
+      - name: React to Command Comment with Success Checkmark
+        if: github.event_name == 'issue_comment' && success()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            await github.rest.reactions.createForIssueComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              comment_id: context.payload.comment.id,
+              content: '+1'
+            });
+
+      - name: Upload Backtest & Evaluation Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: jules-pr-backtest-artifacts
+          path: |
+            reports/
+            user_data/backtest_results/
+          if-no-files-found: ignore
