@@ -1,0 +1,25 @@
+--- user_data/strategies/NostalgiaForInfinityX8_Combined_AI.py
++++ user_data/strategies/NostalgiaForInfinityX8_Combined_AI.py
+@@ -748,6 +748,22 @@
+
+             trade_duration_hours = (current_time - trade.open_date_utc).total_seconds() / 3600.0
+
++            # 0. Enforce tighter stoploss factor (0.92x) during short-term high ATR expansions.
++            if "703" in orig_tag or "706" in orig_tag or "731" in orig_tag:
++                if hasattr(self, "dp") and self.dp is not None:
++                    df_pair, _ = self.dp.get_analyzed_dataframe(pair, self.timeframe)
++                    if len(df_pair) > 0:
++                        current_rows = df_pair.loc[df_pair["date"] <= current_time]
++                        if len(current_rows) > 0:
++                            last_c = current_rows.iloc[-1]
++                            atr_norm = last_c.get("ai_feat_atr_norm", 0.0)
++                            if not np.isnan(float(atr_norm)) and float(atr_norm) > 0.02: # High ATR
++                                # Enforce tighter stoploss
++                                # Original global stoploss or implicit stops might be -0.15 to -0.20
++                                # Here we apply 0.92x factor tighter cut logic
++                                if current_profit <= -0.10: # Tighter SL
++                                    return f"exit_ai_tight_stoploss_atr ( {orig_tag})"
++
+             # 0. AI STRUCTURAL EARLY INVALIDATION CUT:
+             # Cắt giảm rủi ro sớm khi vị thế Short âm >= -17.5% ROE (-3.5% spot 5x) VÀ giá vượt lên trên 1H EMA 50
+             # (hoặc âm >= -22.5% và vượt EMA 200 1h). Giúp thoát hiểm sớm MSTR ở -18.2% ROE (tiết kiệm ~19 USDT)

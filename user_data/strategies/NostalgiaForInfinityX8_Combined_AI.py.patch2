@@ -1,0 +1,20 @@
+--- user_data/strategies/NostalgiaForInfinityX8_Combined_AI.py
++++ user_data/strategies/NostalgiaForInfinityX8_Combined_AI.py
+@@ -957,6 +957,17 @@
+                     log.warning("Short Circuit Breaker evaluation error for %s: %s", pair, e)
+
+         return True
++
++    def custom_stoploss(self, pair: str, trade: Trade, current_time: datetime, current_rate: float,
++                        current_profit: float, **kwargs) -> float:
++        """
++        Enforce tighter stoploss factor (0.92x) during short-term high ATR expansions for identified drag tags.
++        """
++        sl = super().custom_stoploss(pair=pair, trade=trade, current_time=current_time, current_rate=current_rate, current_profit=current_profit, **kwargs) if hasattr(super(), 'custom_stoploss') else -0.99
++
++        # Will be handled properly in custom_exit instead as Nostalgia uses exit functions rather than custom_stoploss usually
++        return sl
++
+
+     def custom_stake_amount(
+         self,

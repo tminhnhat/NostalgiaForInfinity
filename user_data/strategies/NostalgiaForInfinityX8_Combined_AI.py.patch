@@ -1,0 +1,38 @@
+--- user_data/strategies/NostalgiaForInfinityX8_Combined_AI.py
++++ user_data/strategies/NostalgiaForInfinityX8_Combined_AI.py
+@@ -936,6 +936,36 @@
+                             return False
+             except Exception as e:
+                 log.warning("Circuit Breaker evaluation error for %s: %s", pair, e)
++
++        # Short Entry Circuit Breakers & Safeguards (Issue resolution for 703 706 731 dragging performance)
++        if side in ("short", "sell") and hasattr(self, "dp") and self.dp is not None:
++            etag = str(entry_tag or "")
++            if "703" in etag or "706" in etag or "731" in etag:
++                try:
++                    df_pair, _ = self.dp.get_analyzed_dataframe(pair, self.timeframe)
++                    if len(df_pair) >= 12:
++                        current_rows = df_pair.loc[df_pair["date"] <= current_time]
++                        if len(current_rows) > 0:
++                            last_c = current_rows.iloc[-1]
++                            # Restrict simultaneous re-entries following stoploss events within 4 hours.
++                            # Since stoploss event time isn't directly exposed in entry checks natively without trade history parsing,
++                            # we'll look at extreme high ATR expansions for the second part of the task instruction.
++
++                            atr_norm = last_c.get("ai_feat_atr_norm", 0.0)
++                            if not np.isnan(float(atr_norm)) and float(atr_norm) > 0.045: # High ATR Expansion (4.5% on 5m)
++                                log.warning(
++                                    "Volatility Circuit Breaker Triggered: Blocked %s Short entry at %s (ATR Norm: %.2f%%)",
++                                    pair, current_time, float(atr_norm) * 100.0,
++                                )
++                                return False
++
++                            # Ensure we don't enter short during strong chop (high wicks)
++                            upper_wick = last_c.get("ai_feat_upper_wick", 0.0)
++                            lower_wick = last_c.get("ai_feat_lower_wick", 0.0)
++                            if float(upper_wick) > 0.4 and float(lower_wick) > 0.4:
++                                return False
++                except Exception as e:
++                    log.warning("Short Circuit Breaker evaluation error for %s: %s", pair, e)
+
+         return True

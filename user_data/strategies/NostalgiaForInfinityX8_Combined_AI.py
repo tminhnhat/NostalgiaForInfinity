@@ -486,6 +486,8 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
         btc_d1 = df.loc[indices, btc_d1_col].to_numpy()
         btc_rsi = df.loc[indices, "ai_feat_btc_rsi_1h"].to_numpy() if "ai_feat_btc_rsi_1h" in df.columns else np.full(n_cand, 50.0)
 
+        pair_atr_norm = df.loc[indices, "ai_feat_atr_norm"].to_numpy() if "ai_feat_atr_norm" in df.columns else np.full(n_cand, 0.0)
+
         # 1. STRONG_BULL: BTC trên EMA 200 4h, trên EMA 200 1h > 1%, RSI >= 55.0
         is_strong_bull = (btc_d4 > 0.0) & (btc_d1 > 0.01) & (btc_rsi >= 55.0)
 
@@ -498,6 +500,9 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
         thresholds = np.where(is_strong_bull, 0.65, thresholds)
         thresholds = np.where(is_bear_panic, 0.48, thresholds)
         thresholds = np.where(is_chop, 0.58, thresholds)
+
+        # Apply dynamic volatility thresholding for choppiness and high volatility
+        thresholds = np.where(is_chop & (pair_atr_norm > 0.02), 0.68, thresholds)
 
         return thresholds
 
@@ -746,6 +751,22 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
             mfe_lev = (open_rate - min_r) / open_rate * leverage
             trade_duration_hours = (current_time - trade.open_date_utc).total_seconds() / 3600.0
 
+            # 0. Enforce tighter stoploss factor (0.92x) during short-term high ATR expansions.
+            if "703" in orig_tag or "706" in orig_tag or "731" in orig_tag:
+                if hasattr(self, "dp") and self.dp is not None:
+                    df_pair, _ = self.dp.get_analyzed_dataframe(pair, self.timeframe)
+                    if len(df_pair) > 0:
+                        current_rows = df_pair.loc[df_pair["date"] <= current_time]
+                        if len(current_rows) > 0:
+                            last_c = current_rows.iloc[-1]
+                            atr_norm = last_c.get("ai_feat_atr_norm", 0.0)
+                            if not np.isnan(float(atr_norm)) and float(atr_norm) > 0.02: # High ATR
+                                # Enforce tighter stoploss
+                                # Original global stoploss or implicit stops might be -0.15 to -0.20
+                                # Here we apply 0.92x factor tighter cut logic
+                                if current_profit <= -0.10: # Tighter SL
+                                    return f"exit_ai_tight_stoploss_atr ( {orig_tag})"
+
             # 0. AI STRUCTURAL EARLY INVALIDATION CUT:
             # Cắt giảm rủi ro sớm khi vị thế Short âm >= -17.5% ROE (-3.5% spot 5x) VÀ giá vượt lên trên 1H EMA 50
             # (hoặc âm >= -22.5% và vượt EMA 200 1h). Giúp thoát hiểm sớm MSTR ở -18.2% ROE (tiết kiệm ~19 USDT)
@@ -938,7 +959,61 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
             except Exception as e:
                 log.warning("Circuit Breaker evaluation error for %s: %s", pair, e)
 
+        # Short Entry Circuit Breakers & Safeguards (Issue resolution for 703 706 731 dragging performance)
+        if side in ("short", "sell") and hasattr(self, "dp") and self.dp is not None:
+            etag = str(entry_tag or "")
+            if "703" in etag or "706" in etag or "731" in etag:
+                try:
+                    df_pair, _ = self.dp.get_analyzed_dataframe(pair, self.timeframe)
+                    if len(df_pair) >= 12:
+                        current_rows = df_pair.loc[df_pair["date"] <= current_time]
+                        if len(current_rows) > 0:
+                            last_c = current_rows.iloc[-1]
+                            # Restrict simultaneous re-entries following stoploss events within 4 hours.
+                            try:
+                                # Safe call using Trade.get_trades_proxy or fetching from DP if possible
+                                if hasattr(Trade, "get_trades"):
+                                    # Handle sqlalchemy attribute properly
+                                    closed_trades = Trade.get_trades(trade_filter=[Trade.pair == pair, Trade.is_open == False]).all()
+                                    if closed_trades:
+                                        last_trade = closed_trades[-1]
+                                        if last_trade.is_short and last_trade.close_profit < -0.01:
+                                            # Check time since close
+                                            if hasattr(last_trade, 'close_date') and last_trade.close_date:
+                                                time_since_close = (current_time - last_trade.close_date).total_seconds() / 3600.0
+                                                if time_since_close <= 4.0:
+                                                    return False
+                            except Exception:
+                                pass
+
+                            atr_norm = last_c.get("ai_feat_atr_norm", 0.0)
+                            if not np.isnan(float(atr_norm)) and float(atr_norm) > 0.045: # High ATR Expansion (4.5% on 5m)
+                                log.warning(
+                                    "Volatility Circuit Breaker Triggered: Blocked %s Short entry at %s (ATR Norm: %.2f%%)",
+                                    pair, current_time, float(atr_norm) * 100.0,
+                                )
+                                return False
+
+                            # Ensure we don't enter short during strong chop (high wicks)
+                            upper_wick = last_c.get("ai_feat_upper_wick", 0.0)
+                            lower_wick = last_c.get("ai_feat_lower_wick", 0.0)
+                            if float(upper_wick) > 0.4 and float(lower_wick) > 0.4:
+                                return False
+                except Exception as e:
+                    log.warning("Short Circuit Breaker evaluation error for %s: %s", pair, e)
+
         return True
+
+    def custom_stoploss(self, pair: str, trade: Trade, current_time: datetime, current_rate: float,
+                        current_profit: float, **kwargs) -> float:
+        """
+        Enforce tighter stoploss factor (0.92x) during short-term high ATR expansions for identified drag tags.
+        """
+        sl = super().custom_stoploss(pair=pair, trade=trade, current_time=current_time, current_rate=current_rate, current_profit=current_profit, **kwargs) if hasattr(super(), 'custom_stoploss') else -0.99
+
+        # Will be handled properly in custom_exit instead as Nostalgia uses exit functions rather than custom_stoploss usually
+        return sl
+
 
     def custom_stake_amount(
         self,

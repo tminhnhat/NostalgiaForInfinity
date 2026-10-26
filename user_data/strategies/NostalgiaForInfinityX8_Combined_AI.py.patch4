@@ -1,0 +1,33 @@
+--- user_data/strategies/NostalgiaForInfinityX8_Combined_AI.py
++++ user_data/strategies/NostalgiaForInfinityX8_Combined_AI.py
+@@ -957,6 +957,11 @@
+                             return False
+             except Exception as e:
+                 log.warning("Circuit Breaker evaluation error for %s: %s", pair, e)
+
+         # Short Entry Circuit Breakers & Safeguards (Issue resolution for 703 706 731 dragging performance)
+         if side in ("short", "sell") and hasattr(self, "dp") and self.dp is not None:
+             etag = str(entry_tag or "")
+             if "703" in etag or "706" in etag or "731" in etag:
+@@ -966,9 +971,19 @@
+                         if len(current_rows) > 0:
+                             last_c = current_rows.iloc[-1]
+                             # Restrict simultaneous re-entries following stoploss events within 4 hours.
+-                            # Since stoploss event time isn't directly exposed in entry checks natively without trade history parsing,
+-                            # we'll look at extreme high ATR expansions for the second part of the task instruction.
++                            if hasattr(Trade, "get_trades"):
++                                try:
++                                    closed_trades = Trade.get_trades(pair=pair, is_open=False).all()
++                                    if closed_trades:
++                                        last_trade = closed_trades[-1]
++                                        # Check if it was a short trade that exited with a loss within the last 4 hours
++                                        if last_trade.is_short and last_trade.close_profit < 0:
++                                            time_since_close = (current_time - last_trade.close_date_utc).total_seconds() / 3600.0
++                                            if time_since_close <= 4.0:
++                                                return False
++                                except Exception:
++                                    pass
+
+                             atr_norm = last_c.get("ai_feat_atr_norm", 0.0)
+                             if not np.isnan(float(atr_norm)) and float(atr_norm) > 0.045: # High ATR Expansion (4.5% on 5m)
+                                 log.warning(
