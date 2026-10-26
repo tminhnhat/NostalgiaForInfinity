@@ -6,7 +6,7 @@ on:
     branches:
       - main
   workflow_run:
-    workflows: ["Jules Optimizer Agent Setup"]
+    workflows: ["Google Jules Task Runner - Optimization Agent", "Jules Optimizer Agent Setup"]
     types: [completed]
   workflow_dispatch:
     inputs:
@@ -67,6 +67,7 @@ jobs:
           HERMES_API_KEY: ${{ secrets.HERMES_API_KEY }}
           JULES_API_KEY: ${{ secrets.JULES_API_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_MODEL: "gemini-3.1-pro"
         run: |
           echo "Hermes reading Jules' commit on PR #${PR_NUMBER}..."
           python scripts/hermes_peer_reviewer.py --pr-number "${PR_NUMBER}"

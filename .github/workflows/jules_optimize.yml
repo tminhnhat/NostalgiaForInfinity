@@ -1,4 +1,4 @@
-name: Jules Optimizer Agent Setup
+name: Google Jules Task Runner - Optimization Agent
 
 on:
   push:
@@ -13,8 +13,8 @@ permissions:
   pull-requests: write
 
 jobs:
-  jules_analyze_and_propose:
-    name: Run Jules Alpha Decay Analysis & Propose Upgrade
+  jules_task_optimize:
+    name: Run Google Jules Agent Task (Evaluated with Gemini 3.1 Pro)
     runs-on: ubuntu-latest
 
     steps:
@@ -35,19 +35,22 @@ jobs:
           python -m pip install --upgrade pip
           pip install pandas
 
-      - name: Run Jules Optimizer
+      - name: Execute Jules Task Runner
         env:
           GITHUB_TOKEN: ${{ secrets.GH_PAT_TOKEN || secrets.GITHUB_TOKEN }}
           GH_TOKEN: ${{ secrets.GH_PAT_TOKEN || secrets.GITHUB_TOKEN }}
           JULES_API_KEY: ${{ secrets.JULES_API_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_MODEL: "gemini-3.1-pro"
         run: |
           python scripts/jules_optimizer.py
 
-      - name: Upload Proposal Artifact
+      - name: Upload Jules Task & Proposal Artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: jules-proposal-summary
-          path: reports/jules_pr_proposal.md
+          name: jules-task-artifacts
+          path: |
+            reports/jules_pr_proposal.md
+            reports/jules_task_session.json
           if-no-files-found: ignore

@@ -127,31 +127,33 @@ Output a structured, high-standard peer-review comment formatted in GitHub Markd
 - Prescribed OOS Stress Test Windows"""
 
     if api_key:
-        try:
-            api_endpoint = os.environ.get(
-                "HERMES_API_URL",
-                f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
-            )
-            logger.info("Calling Hermes LLM Review Engine...")
-            payload = json.dumps({
-                "contents": [{"parts": [{"text": prompt}]}]
-            }).encode("utf-8")
-            req = urllib.request.Request(
-                api_endpoint,
-                data=payload,
-                headers={"Content-Type": "application/json", "User-Agent": "HermesReviewAgent/1.0"}
-            )
-            with urllib.request.urlopen(req, timeout=30) as resp:
-                data = json.loads(resp.read().decode("utf-8"))
-                llm_review = data["candidates"][0]["content"]["parts"][0]["text"]
-                logger.info("Hermes peer-review generated successfully via LLM.")
-                return f"""### 🛡️ Senior Quant Risk Officer Peer-Review (Hermes)
-*Audit of commit `{sha}` by **{author}***
+        model_name = os.environ.get("GEMINI_MODEL", "gemini-3.1-pro")
+        for m in [model_name, "gemini-3.1-pro-preview", "gemini-3.0-pro", "gemini-2.5-pro", "gemini-1.5-pro"]:
+            try:
+                api_endpoint = os.environ.get(
+                    "HERMES_API_URL",
+                    f"https://generativelanguage.googleapis.com/v1beta/models/{m}:generateContent?key={api_key}"
+                )
+                logger.info(f"Calling Hermes Quant Review Engine using {m}...")
+                payload = json.dumps({
+                    "contents": [{"parts": [{"text": prompt}]}]
+                }).encode("utf-8")
+                req = urllib.request.Request(
+                    api_endpoint,
+                    data=payload,
+                    headers={"Content-Type": "application/json", "User-Agent": "HermesReviewAgent/1.0"}
+                )
+                with urllib.request.urlopen(req, timeout=30) as resp:
+                    data = json.loads(resp.read().decode("utf-8"))
+                    llm_review = data["candidates"][0]["content"]["parts"][0]["text"]
+                    logger.info(f"Hermes peer-review generated successfully via {m}.")
+                    return f"""### 🛡️ Senior Quant Risk Officer Peer-Review (Hermes)
+*Audit of commit `{sha}` by **{author}*** (Evaluated with Google `{m}`)
 
 {llm_review}
 """
-        except Exception as e:
-            logger.warning(f"Hermes LLM call failed ({e}). Using rule-based quant risk audit.")
+            except Exception as e:
+                logger.warning(f"Hermes call with {m} failed ({e}). Trying fallback...")
 
     # Deterministic Quant Risk Critique
     critique = f"""### 🛡️ Senior Quant Risk Officer Peer-Review (Hermes)
