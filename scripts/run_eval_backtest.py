@@ -84,8 +84,9 @@ def main():
         print("=" * 60)
         with open(report_path, "r", encoding="utf-8") as f:
             for line in f:
-                if any(k in line for k in ["Win Rate", "Sharpe", "Sortino", "Max Drawdown", "Profit Factor", "Total Profit", "Longest Loss Streak"]):
-                    print(line.strip())
+                if any(k in line for k in ["Winrate", "Win Rate", "Sharpe", "Sortino", "Max Drawdown", "Sụt giảm", "Profit Factor", "Lợi nhuận", "Longest Loss Streak", "Chuỗi", "Tổng số lệnh"]):
+                    if line.strip().startswith("|") and not line.strip().startswith("| :---"):
+                        print(line.strip())
         print("=" * 60 + "\n")
 
 
