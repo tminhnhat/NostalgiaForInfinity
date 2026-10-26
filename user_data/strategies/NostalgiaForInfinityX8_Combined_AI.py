@@ -971,31 +971,37 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
                    Short Tier 2 (88.9% WR: 702 703 731): Trần 115$ * comp_mult khi open_trades <= 6.
                    Short Tier 3 (Tag 562 bão): Khóa cứng trần <= 100$ (tuyệt đối không scale comp_mult) để chặn bão rủi ro.
         """
-        # 1. Trục 3: Dynamic Equity Compounding theo % thặng dư vốn gốc
+        # 1. Trục Vốn Cơ Sở (Base Stake Allocation)
         init_capital = float(self.config.get("dry_run_wallet", 1000.0))
         max_slots = float(self.config.get("max_open_trades", 10))
         default_slot_stake = max(init_capital / max(max_slots, 1.0), 10.0)
 
+        # raw_proposed do Freqtrade tính toán dựa trên số dư ví hiện tại và số slot còn lại
         raw_proposed = proposed_stake if (proposed_stake and proposed_stake > 0) else default_slot_stake
 
+        # Kiểm tra chế độ staking: Nếu config là "unlimited", Freqtrade đã tự động compound theo tăng trưởng ví.
+        # Tuyệt đối KHÔNG nhân thêm comp_mult để tránh lỗi DOUBLE COMPOUNDING (làm phình to stake về cuối).
+        is_unlimited = str(self.config.get("stake_amount", "")).lower() == "unlimited"
+        
         comp_mult = 1.0
-        cur_profit = 0.0
-        if Trade and hasattr(Trade, "bt_total_profit"):
-            cur_profit = float(Trade.bt_total_profit)
-        elif hasattr(self, "wallets") and self.wallets is not None:
-            try:
-                stake_curr = self.config.get("stake_currency", "USDT")
-                w_tot = self.wallets.get_total(stake_curr)
-                if w_tot and w_tot > init_capital:
-                    cur_profit = float(w_tot) - init_capital
-            except Exception:
-                pass
+        if not is_unlimited:
+            cur_profit = 0.0
+            if Trade and hasattr(Trade, "bt_total_profit"):
+                cur_profit = float(Trade.bt_total_profit)
+            elif hasattr(self, "wallets") and self.wallets is not None:
+                try:
+                    stake_curr = self.config.get("stake_currency", "USDT")
+                    w_tot = self.wallets.get_total(stake_curr)
+                    if w_tot and w_tot > init_capital:
+                        cur_profit = float(w_tot) - init_capital
+                except Exception:
+                    pass
 
-        surplus_threshold = 0.20 * init_capital
-        if cur_profit > surplus_threshold:
-            growth_surplus = (cur_profit - surplus_threshold) / init_capital
-            comp_mult = 1.0 + 0.45 * growth_surplus
-            comp_mult = float(np.clip(comp_mult, 1.0, 2.65))
+            surplus_threshold = 0.20 * init_capital
+            if cur_profit > surplus_threshold:
+                growth_surplus = (cur_profit - surplus_threshold) / init_capital
+                comp_mult = 1.0 + 0.30 * growth_surplus
+                comp_mult = float(np.clip(comp_mult, 1.0, 1.50))
 
         base_stake = raw_proposed * comp_mult
         vol_mult = 1.0
@@ -1013,28 +1019,28 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
                     if val_atr is not None and not np.isnan(val_atr) and val_atr > 0:
                         atr_norm = float(val_atr)
                         vol_mult = 0.012 / atr_norm
-                        vol_mult = float(np.clip(vol_mult, 0.25, 1.30))
+                        vol_mult = float(np.clip(vol_mult, 0.75, 1.25))
 
                     # 3. Trục 2: AI Confidence Sizing (áp dụng khi có ai_short_prob)
                     val_prob = last_c.get("ai_short_prob", None)
                     if val_prob is not None and not np.isnan(val_prob) and val_prob > 0:
                         p = float(val_prob)
                         if p >= 0.75:
-                            ai_mult = 1.20
+                            ai_mult = 1.15
                         elif p < 0.60:
-                            ai_mult = 0.80
+                            ai_mult = 0.85
 
         target_stake = base_stake * vol_mult * ai_mult
 
-        # 4. Dynamic Margin Buffer & Tiered Sizing Belts (Tất cả theo tỷ lệ raw_proposed):
+        # 4. Dynamic Margin Buffer & Disciplined Sizing Belts (Khống chế chặt chẽ quanh raw_proposed):
         open_trades_list = Trade.get_open_trades() if Trade else []
         open_trades_count = len(open_trades_list)
         open_shorts_count = sum(1 for t in open_trades_list if getattr(t, "is_short", False))
 
-        # Trần cho Long: Tối đa 1.6x raw_proposed * comp_mult nếu slot <= 6, ngược lại <= 1.15x
-        max_allowed_stake = (1.60 * raw_proposed * comp_mult) if open_trades_count <= 6 else (1.15 * raw_proposed * comp_mult)
+        # Trần cho Long: Tối đa 1.25x raw_proposed nếu slot <= 6, ngược lại <= 1.05x raw_proposed
+        max_allowed_stake = (1.25 * raw_proposed) if open_trades_count <= 6 else (1.05 * raw_proposed)
 
-        # Phân tầng trần cho vị thế Short (Tiered Short Sizing):
+        # Phân tầng trần cho vị thế Short:
         if side in ("short", "sell"):
             etag = str(entry_tag or "")
 
@@ -1046,26 +1052,25 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
             tier2_ai_tags = ("703 722 731", "701 703 731", "724 731")
             is_tier2 = any(t in etag for t in tier2_ai_tags) and ("_AI_PASS" in etag or "AI_PASS" in etag)
 
-            # Tối ưu hóa vốn cho Tier 1 Elite khi chưa có lệnh Short nào khác (open_shorts_count == 0):
-            # Tăng base_stake thêm 25% (tức 1.25x raw_proposed)
+            # Ưu tiên nhẹ cho Tier 1 Elite khi chưa có lệnh Short nào:
             if is_tier1 and open_shorts_count == 0:
-                base_stake = 1.25 * raw_proposed * comp_mult
+                base_stake = 1.15 * raw_proposed
                 target_stake = base_stake * vol_mult * ai_mult
 
-            # Short Concurrent Double-Drawdown Guard theo tỷ lệ raw_proposed:
+            # Short Concurrent Double-Drawdown Guard:
             if open_shorts_count >= 2:
-                max_allowed_stake = 1.0 * raw_proposed
+                max_allowed_stake = 0.80 * raw_proposed
             elif open_shorts_count == 1:
-                max_allowed_stake = 1.20 * raw_proposed * min(1.20, comp_mult)
+                max_allowed_stake = 1.00 * raw_proposed
             elif is_tier1 and open_trades_count <= 6:
-                max_allowed_stake = 1.95 * raw_proposed * comp_mult
+                max_allowed_stake = 1.25 * raw_proposed
             elif is_tier2 and open_trades_count <= 6:
-                max_allowed_stake = 1.60 * raw_proposed * comp_mult
+                max_allowed_stake = 1.10 * raw_proposed
             else:
-                max_allowed_stake = 1.45 * raw_proposed * min(1.45, comp_mult)
+                max_allowed_stake = 1.00 * raw_proposed
 
-        # Sàn tối thiểu: Đảm bảo không nhỏ hơn min_stake của sàn (5 USDT), và tối thiểu 20% raw_proposed
-        min_allowed_stake = max(5.0, 0.20 * raw_proposed)
+        # Sàn tối thiểu: Đảm bảo không nhỏ hơn min_stake của sàn (5 USDT), và tối thiểu 30% raw_proposed
+        min_allowed_stake = max(5.0, 0.30 * raw_proposed)
 
         if min_stake is not None:
             min_allowed_stake = max(min_allowed_stake, min_stake)
