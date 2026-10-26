@@ -180,7 +180,7 @@ To obtain final merge authorization into `main`, Jules' commit must undergo:
 3. **Max Drawdown Limit**: Account drawdown must remain **≤ 5.0%**.
 
 ---
-*Maintainer may reply `/approve-upgrade` to launch the automated OOS validation runner.*
+*Maintainer may reply with command `approve-upgrade` (using slash prefix) to launch the automated OOS validation runner.*
 """
     return critique
 

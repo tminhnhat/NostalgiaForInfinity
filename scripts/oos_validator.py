@@ -98,7 +98,7 @@ def build_comparison_report(is_metrics: dict, oos_metrics: dict, oos_timerange: 
 
     comment = f"""## 🧪 Out-Of-Sample (OOS) Validation Results
 
-Triggered via `/approve-upgrade`.
+Triggered via maintainer command: `approve-upgrade`.
 - **Validation Dataset**: Disjoint OOS Window (`{oos_timerange}`)
 - **Final Verdict**: {status_icon}
 

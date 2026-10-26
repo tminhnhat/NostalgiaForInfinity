@@ -14,17 +14,24 @@ jobs:
     name: Execute OOS Validation on /approve-upgrade
     if: |
       github.event.issue.pull_request != null &&
-      contains(github.event.comment.body, '/approve-upgrade')
+      startsWith(github.event.comment.body, '/approve-upgrade') &&
+      !contains(github.event.comment.body, 'Out-Of-Sample') &&
+      !contains(github.event.comment.body, 'Senior Quant Risk Officer')
     runs-on: ubuntu-latest
 
     steps:
-      - name: Verify Maintainer Authorization
+      - name: Verify Maintainer Authorization & Prevent Recursion
         id: check_auth
         env:
           COMMENT_USER: ${{ github.event.comment.user.login }}
+          COMMENT_BODY: ${{ github.event.comment.body }}
           REPO_OWNER: ${{ github.repository_owner }}
         run: |
           echo "Triggered by: $COMMENT_USER"
+          if [[ "$COMMENT_BODY" == *"Out-Of-Sample"* ]] || [[ "$COMMENT_BODY" == *"Senior Quant Risk Officer"* ]]; then
+            echo "::notice::Detected automated audit report containing command keyword. Aborting to prevent recursion."
+            exit 0
+          fi
           if [ "$COMMENT_USER" != "$REPO_OWNER" ] && [ "$COMMENT_USER" != "tminhnhat" ]; then
             echo "::error::Unauthorized user tried to trigger /approve-upgrade"
             exit 1
