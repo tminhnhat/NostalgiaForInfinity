@@ -389,7 +389,6 @@ def create_git_proposal(date_str: str, hypothesis: str, patch_content: str, toke
 ```
 
 ---
-*Assigned for Senior Quant Risk Review by **Hermes / Antigravity**.*
 *Maintainer may reply with command `approve-upgrade` (using slash prefix) to launch OOS validation.*
 """
 
