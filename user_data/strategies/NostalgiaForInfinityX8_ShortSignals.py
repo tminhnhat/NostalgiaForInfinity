@@ -70,6 +70,11 @@ class NostalgiaForInfinityX8_ShortSignals:
         # Nhóm 4: BTC Spillover
         self.enable_short_btc_spillover = True         # Tag 731 (BTC dump spillover - 83.9% winrate)
 
+        # Nhóm 5: Advanced Quantitative Signals (v7.2)
+        self.enable_short_liquidity_sweep = True       # Tag 741 (Macro Liquidity Sweep Fakeout Rejection)
+        self.enable_short_fvg_rejection = True         # Tag 742 (Fair Value Gap Imbalance Retest Failure)
+        self.enable_short_mss_breakdown = True         # Tag 743 (Market Structure Shift & Momentum Flip)
+
         # =========================================================================
         # Exit Thresholds chuyên biệt cho Short
         # =========================================================================
@@ -86,6 +91,7 @@ class NostalgiaForInfinityX8_ShortSignals:
             "711", "712", "713", "714",
             "721", "722", "723", "724", "725",
             "731",
+            "741", "742", "743",
             "short_custom_breakdown",
             "short_custom_sfp",
             "short_custom_exhaustion",
@@ -210,6 +216,7 @@ class NostalgiaForInfinityX8_ShortSignals:
         body_ratio = dataframe["body_ratio"].to_numpy(copy=False)
         vol_spike_ratio = dataframe["vol_spike_ratio"].to_numpy(copy=False)
 
+        rolling_high_12 = dataframe["rolling_high_12"].to_numpy(copy=False)
         rolling_high_24 = dataframe["rolling_high_24"].to_numpy(copy=False)
         rolling_low_12 = dataframe["rolling_low_12"].to_numpy(copy=False)
         rolling_low_24 = dataframe["rolling_low_24"].to_numpy(copy=False)
@@ -584,9 +591,74 @@ class NostalgiaForInfinityX8_ShortSignals:
             & (~btc_bullish)                              # Không short khi BTC đang tăng dốc
         )
 
-        # =========================================================================
-        # CONFLUENCE ENGINE: LỌC SẠCH NHIỄU - CHỈ VÀO KHI HỘI TỤ ĐỦ ĐIỀU KIỆN CHẤT LƯỢNG CAO
-        # =========================================================================
+        # TAG 741: Macro Liquidity Sweep & Fakeout Rejection (SFP)
+        shift_high_12 = np.roll(rolling_high_12, 1)
+        cond_741 = (
+            (volume > 0)
+            & (ema_50 < ema_200)                          # Downtrend tổng thể
+            & (~close_above_ema200_1h)                    # Dưới 1H EMA 200
+            & (high > shift_high_12)                      # Quét đỉnh 12 nến (1h)
+            & (close < shift_high_12)                     # Đóng cửa thất bại dưới đỉnh cũ (Fakeout rõ ràng)
+            & (close < open_px)                           # BẮT BUỘC NẾN ĐỎ
+            & (upper_wick_ratio >= 0.38)                  # Râu trên dài từ chối giá
+            & (vol_spike_ratio >= 1.25)                   # Volume quét thanh khoản cao
+            & (vol_spike_ratio <= 4.50)                   # Giới hạn trần volume
+            & (rsi_14 >= 44.0) & (rsi_14 <= 68.0)         # Vùng hồi phục kỹ thuật
+            & (~rsi_1h_oversold)
+            & (~is_saturday)
+            & (~is_sunday)
+            & (~is_monday_morning)
+            & (~is_monday_us_open)
+            & (~btc_bullish)
+        )
+
+        # TAG 742: Fair Value Gap (FVG) / Imbalance Retest Failure
+        # Nhịp hồi test cản EMA 21 / EMA 50 sau khi xuất hiện nến xả tạo imbalance
+        shift_low_2 = np.roll(low, 2)
+        has_fvg = (shift_low_2 > np.roll(high, 1))
+        cond_742 = (
+            (volume > 0)
+            & (ema_50 < ema_200)                          # Downtrend tổng thể
+            & (~close_above_ema200_1h)                    # Dưới 1H EMA 200
+            & has_fvg                                     # Tồn tại khoảng trống giảm giá
+            & (high >= ema_21 * 0.999)                    # Hồi test cản động EMA 21
+            & (close < ema_21) & (close < ema_9)          # Bị đạp đóng nến dưới EMA 9 & 21
+            & (close < open_px)                           # BẮT BUỘC NẾN ĐỎ
+            & (upper_wick_ratio >= 0.35)                  # Râu trên xả từ chối
+            & (vol_spike_ratio >= 1.20)                   # Volume xác nhận
+            & (vol_spike_ratio <= 4.50)
+            & (rsi_14 >= 42.0) & (rsi_14 <= 58.0)         # Vùng RSI hồi kỹ thuật
+            & (~rsi_1h_oversold)
+            & (~is_saturday)
+            & (~is_sunday)
+            & (~is_monday_morning)
+            & (~is_monday_us_open)
+            & (~btc_bullish)
+        )
+
+        # TAG 743: Market Structure Shift (MSS) Breakdown
+        # Gãy cấu trúc vi mô: xuyên thủng đáy Higher Low gần nhất kèm nến xả dứt khoát
+        shift_low_12 = np.roll(rolling_low_12, 1)
+        shift_macdhist = np.roll(macdhist, 1)
+        cond_743 = (
+            (volume > 0)
+            & (ema_50 < ema_200)                          # Downtrend tổng thể
+            & (~close_above_ema200_1h)                    # Dưới 1H EMA 200
+            & (close < shift_low_12)                      # Xuyên thủng đáy vi mô 12 nến
+            & (close < open_px)                           # BẮT BUỘC NẾN ĐỎ
+            & (body_ratio >= 0.45)                        # Thân nến giảm dứt khoát (áp lực bán chiếm ưu thế)
+            & (lower_wick_ratio <= 0.25)                  # Râu dưới ngắn (không rút chân)
+            & (macdhist < 0.0) & (macdhist < shift_macdhist)  # Đà xả đang gia tốc
+            & (vol_spike_ratio >= 1.30)                   # Volume xả breakout
+            & (vol_spike_ratio <= 4.50)
+            & (rsi_14 >= 33.0) & (rsi_14 <= 50.0)         # Không bán đáy cạn kiệt
+            & (~rsi_1h_oversold)
+            & (~is_saturday)
+            & (~is_sunday)
+            & (~is_monday_morning)
+            & (~is_monday_us_open)
+            & (~btc_bullish)
+        )
 
         # Setup 1: Exhaustion Confluence - ĐÃ TẮT ĐỂ TRIỆT TIÊU 100% NHIỄU BẮT ĐỈNH TRONG SÓNG TĂNG
         trigger_exhaustion = np.zeros(n_rows, dtype=bool)
@@ -618,6 +690,18 @@ class NostalgiaForInfinityX8_ShortSignals:
         # Setup 9: BB Upper Rejection Scalp (Chạm dải trên dốc xuống bị từ chối)
         trigger_bb_rejection = cond_723 & cond_731
 
+        # Setup 10: Macro Liquidity Sweep Fakeout Rejection (Tag 741)
+        # Bắt nhịp quét thanh khoản đỉnh hồi trong downtrend đồng thuận với đà suy yếu của BTC
+        trigger_741 = cond_741 & (btc_dumping | (ema_50 < ema_200)) & (~close_above_ema200_1h) if self.enable_short_liquidity_sweep else np.zeros(n_rows, dtype=bool)
+
+        # Setup 11: Fair Value Gap Retest Failure (Tag 742)
+        # Bắt nhịp hồi lấp khoảng trống FVG chạm cản EMA 21 bị từ chối
+        trigger_742 = cond_742 & (btc_dumping | (ema_50 < ema_200)) & (~close_above_ema200_1h) if self.enable_short_fvg_rejection else np.zeros(n_rows, dtype=bool)
+
+        # Setup 12: Market Structure Shift Breakdown (Tag 743)
+        # Gãy cấu trúc vi mô xác nhận động lượng xả
+        trigger_743 = cond_743 & cond_731 if self.enable_short_mss_breakdown else np.zeros(n_rows, dtype=bool)
+
         # BỘ LỌC VĨ MÔ QUY TẮC VÀNG: BẮT BUỘC DOWNTREND KHUNG LỚN & KHÔNG BÁN ĐÁY QUÁ BÁN
         # Tuyệt đối cấm Short bất kỳ coin nào đang nằm trên EMA 200 hoặc khi RSI đã rơi vào vùng quá bán sâu (<32)
         macro_bearish_regime = (
@@ -638,6 +722,9 @@ class NostalgiaForInfinityX8_ShortSignals:
             | trigger_bear_div
             | trigger_macro_breakdown
             | trigger_bb_rejection
+            | trigger_741
+            | trigger_742
+            | trigger_743
             | trigger_exhaustion
         ) & macro_bearish_regime
 
@@ -660,6 +747,9 @@ class NostalgiaForInfinityX8_ShortSignals:
                 (cond_724, "724"),
                 (cond_725, "725"),
                 (cond_731, "731"),
+                (cond_741, "741"),
+                (cond_742, "742"),
+                (cond_743, "743"),
             ]
             for sig_mask, tag in all_signals:
                 active_idxs = np.intersect1d(idxs, np.where(sig_mask)[0])

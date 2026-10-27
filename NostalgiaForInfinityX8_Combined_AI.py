@@ -65,11 +65,14 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
         "custom_short_724_enable": True,
         "custom_short_725_enable": False,
         "custom_short_731_enable": True,
+        "custom_short_741_enable": True,
+        "custom_short_742_enable": True,
+        "custom_short_743_enable": True,
     }
 
     def version(self) -> str:
         base_ver = super().version()
-        return f"{base_ver} + AI_Gatekeeper_v7.1_Relief_Rejection"
+        return f"{base_ver} + AI_Gatekeeper_v7.2_New_Short_Tags_741_742_743"
 
     def __init__(self, config: dict) -> None:
         # Tạm thời ẩn các key custom khỏi nfi_parameters để Nostalgia gốc không log warning không cần thiết
@@ -105,6 +108,12 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
             ai_tags_to_register.append(f"724 731_AI_PASS")
             ai_tags_to_register.append(f"721 731_AI_PASS")
             ai_tags_to_register.append(f"702 703 724 731_AI_PASS")
+            ai_tags_to_register.append(f"741 731_AI_PASS")
+            ai_tags_to_register.append(f"742 731_AI_PASS")
+            ai_tags_to_register.append(f"743 731_AI_PASS")
+            ai_tags_to_register.append(f"703 741 731_AI_PASS")
+            ai_tags_to_register.append(f"703 742 731_AI_PASS")
+            ai_tags_to_register.append(f"703 743 731_AI_PASS")
 
         for atag in set(ai_tags_to_register):
             if atag not in self.short_normal_mode_tags:
@@ -185,6 +194,9 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
             "custom_short_722_enable": "enable_short_stochrsi_cross",
             "custom_short_723_enable": "enable_short_bb_scalp",
             "custom_short_731_enable": "enable_short_btc_spillover",
+            "custom_short_741_enable": "enable_short_liquidity_sweep",
+            "custom_short_742_enable": "enable_short_fvg_rejection",
+            "custom_short_743_enable": "enable_short_mss_breakdown",
         }
         # Đồng bộ sang short_strategy (NostalgiaForInfinityX8_ShortSignals) nếu đã được khởi tạo
         if hasattr(self, "short_strategy") and self.short_strategy is not None:
@@ -458,9 +470,9 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
         score += np.where(dist_200_1h <= 0.0, 0.12, -0.20)  # Thưởng lớn khi dưới EMA 200 1h
         score += np.where(btc_dist_200 <= 0.0, 0.08, -0.10) # Thưởng khi BTC đang Downtrend
         
-        # Thưởng khi RSI vùng đà giảm (30-48) HOẶC nến hồi cản động bị xả râu trên (RSI 44-58 và upper wick >= 0.35)
+        # Thưởng khi RSI vùng đà giảm (30-48) HOẶC nến hồi cản động bị xả râu trên (RSI 44-68 và upper wick >= 0.35)
         rsi_in_downtrend = (rsi >= 30.0) & (rsi <= 48.0)
-        relief_rejection = (rsi >= 44.0) & (rsi <= 58.0) & (u_wick >= 0.35)
+        relief_rejection = (rsi >= 44.0) & (rsi <= 68.0) & (u_wick >= 0.35)
         score += np.where(rsi_in_downtrend | relief_rejection, 0.08, -0.05)
 
         # Phạt nặng các cây nến rút chân pinbar hoặc quá bán sâu
@@ -586,10 +598,10 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
                 # 3.0.2. NÂNG CẤP BẢO VỆ TÍN HIỆU SHORT (Monthly / Quarterly US Open Squeeze Guard):
                 # Phiên Mỹ mở cửa ngày đầu tháng/quý (ngày 1 hàng tháng từ 12:00 - 15:00 UTC) khi dòng tiền tổ chức
                 # tái cơ cấu danh mục và quét thanh khoản hai chiều cực mạnh.
-                # Chặn hoàn toàn bẫy Short Squeeze cho các tag chính (702, 721, 724).
+                # Chặn hoàn toàn bẫy Short Squeeze cho các tag chính (702, 721, 724, 741, 742, 743).
                 if np.any(custom_mask) and "enter_tag_custom" in df.columns and "date" in df.columns:
                     c_tags_series = df["enter_tag_custom"].fillna("").astype(str)
-                    has_protected = custom_mask & c_tags_series.str.contains("702|721|724", regex=True).to_numpy()
+                    has_protected = custom_mask & c_tags_series.str.contains("702|721|724|741|742|743", regex=True).to_numpy()
                     if np.any(has_protected):
                         d_series = df["date"].dt
                         day_of_month = d_series.day.to_numpy(copy=False)
