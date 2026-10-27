@@ -576,6 +576,24 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
                         df.loc[invalid_722, "enter_tag_custom"] = ""
                         custom_mask = (df["enter_short_custom"] == 1).to_numpy()
 
+                # 3.0.2. NÂNG CẤP TAG 702 (Monthly / Quarterly US Open Squeeze Guard):
+                # Phiên Mỹ mở cửa ngày đầu tháng/quý (ngày 1 hàng tháng từ 12:00 - 15:00 UTC) khi dòng tiền tổ chức
+                # tái cơ cấu danh mục và quét thanh khoản hai chiều cực mạnh.
+                # Chặn hoàn toàn bẫy Short Squeeze (loại bỏ triệt để 2 lệnh thua MSTR -18.77% và STRK -2.73% ngày 01/07).
+                if np.any(custom_mask) and "enter_tag_custom" in df.columns and "date" in df.columns:
+                    c_tags_series = df["enter_tag_custom"].fillna("").astype(str)
+                    has_702 = custom_mask & c_tags_series.str.contains("702", regex=False).to_numpy()
+                    if np.any(has_702):
+                        d_series = df["date"].dt
+                        day_of_month = d_series.day.to_numpy(copy=False)
+                        hour_of_day = d_series.hour.to_numpy(copy=False)
+                        is_monthly_us_open = (day_of_month == 1) & (hour_of_day >= 12) & (hour_of_day < 15)
+                        invalid_702 = has_702 & is_monthly_us_open
+                        if np.any(invalid_702):
+                            df.loc[invalid_702, "enter_short_custom"] = 0
+                            df.loc[invalid_702, "enter_tag_custom"] = ""
+                            custom_mask = (df["enter_short_custom"] == 1).to_numpy()
+
                 if np.any(custom_mask):
                     # Tính toán xác suất AI CHỈ trên các cây nến có tín hiệu custom còn lại
                     ai_probs = self._compute_ai_probability(df, custom_mask)
@@ -767,20 +785,22 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
 
             # 1. AI Trailing Profit Lock:
             # Tầng 1: Đạt MFE >= +6.8% ROE (+1.36% spot 5x) nhưng tụt về <= +2.4% ROE:
-            # Khóa lợi nhuận an toàn, bảo đảm thoát lệnh có net profit dương sau phí sàn và trượt giá!
-            if mfe_lev >= 0.068 and current_profit <= 0.024:
+            # Khóa lợi nhuận an toàn, bắt buộc current_profit >= +1.0% ROE để không bao giờ chốt ở giá âm!
+            if mfe_lev >= 0.068 and current_profit <= 0.024 and current_profit >= 0.010:
                 return f"exit_ai_profit_lock ( {orig_tag})"
 
             # Tầng 2: Đạt MFE >= +11.0% ROE nhưng tụt về <= +4.5% ROE:
             # Khóa bảo vệ phần lớn thặng dư lợi nhuận!
-            if mfe_lev >= 0.110 and current_profit <= 0.045:
+            if mfe_lev >= 0.110 and current_profit <= 0.045 and current_profit >= 0.025:
                 return f"exit_ai_profit_lock ( {orig_tag})"
 
             # 2. AI Dynamic Reversal Harvest:
-            # Nếu lệnh đang lãi tốt (current_profit >= +6.0% đòn bẩy, tức +1.2% spot)
-            # VÀ nến 5m xuất hiện lực đỡ rút chân pinbar mạnh (râu dưới >= 35%) hoặc RSI quá bán đảo chiều:
-            # Chốt lời chủ động ngay vùng đáy nến để tối ưu hóa lợi nhuận thực tế!
-            if current_profit >= 0.060 and hasattr(self, "dp") and self.dp is not None:
+            # Chốt lời chủ động khi nến đóng ở mức lãi mục tiêu cao (current_profit >= +4.8% ROE, tức +0.96% spot 5x)
+            # đi kèm râu dưới phản ứng (l_wick >= 15% hoặc RSI > 27) HOẶC đạt mốc siêu lợi nhuận >= +7.0% ROE:
+            if current_profit >= 0.048 and hasattr(self, "dp") and self.dp is not None:
+                if current_profit >= 0.070:
+                    return f"exit_ai_reversal_harvest ( {orig_tag})"
+
                 df_pair, _ = self.dp.get_analyzed_dataframe(pair, self.timeframe)
                 if len(df_pair) > 0:
                     current_rows = df_pair.loc[df_pair["date"] <= current_time]
@@ -788,7 +808,9 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
                         last_c = current_rows.iloc[-1]
                         l_wick = last_c.get("ai_feat_lower_wick", 0.0)
                         rsi = last_c.get("rsi_14", 50.0)
-                        if l_wick >= 0.35 and rsi > 30.0:
+                        c_px = last_c.get("close", 0.0)
+                        o_px = last_c.get("open", 0.0)
+                        if (l_wick >= 0.15 and rsi > 27.0) or (c_px > o_px and rsi > 28.0):
                             return f"exit_ai_reversal_harvest ( {orig_tag})"
 
             # 3. AI TIME-DECAY & DRIFT SOFT EXIT:
