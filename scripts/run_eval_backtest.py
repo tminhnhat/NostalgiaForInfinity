@@ -25,6 +25,11 @@ def main():
     parser.add_argument("--days", type=int, default=None)
     parser.add_argument("--config", type=Path, default=Path("configs/backtest_config.json"))
     parser.add_argument("--pairlist", type=Path, default=None)
+    parser.add_argument("--version", type=str, default=None, help="Strategy version tag")
+    parser.add_argument("--commit-sha", type=str, default=None, help="Git commit SHA")
+    parser.add_argument("--run-label", type=str, default=None, help="Run marker/label for differentiation")
+    parser.add_argument("--run-id", type=str, default=None, help="GitHub Actions run ID")
+    parser.add_argument("--run-url", type=str, default=None, help="GitHub Actions run URL")
     args = parser.parse_args()
 
     days = 180
@@ -45,6 +50,10 @@ def main():
 
     print(f"🎯 Evaluation Window: {timerange} ({days} days)")
     print(f"🚀 Strategy: {args.strategy}")
+    if args.version:
+        print(f"🏷️ Version: {args.version}")
+    if args.run_label:
+        print(f"🔖 Run Marker: {args.run_label}")
     print(f"⚙️ Config: {args.config}")
 
     # Build backtesting command
@@ -75,6 +84,17 @@ def main():
 
     print("📊 Exporting metrics and generating reports/latest_report.md...")
     export_cmd = [sys.executable, "scripts/export_report.py", "--strategy", args.strategy]
+    if args.version:
+        export_cmd.extend(["--version", args.version])
+    if args.commit_sha:
+        export_cmd.extend(["--commit-sha", args.commit_sha])
+    if args.run_label:
+        export_cmd.extend(["--run-label", args.run_label])
+    if args.run_id:
+        export_cmd.extend(["--run-id", args.run_id])
+    if args.run_url:
+        export_cmd.extend(["--run-url", args.run_url])
+
     export_res = subprocess.run(export_cmd, check=False, env=sub_env)
     if export_res.returncode != 0:
         print(f"⚠️ Report export warning (code {export_res.returncode})")

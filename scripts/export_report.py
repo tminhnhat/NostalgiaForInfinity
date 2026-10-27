@@ -13,7 +13,10 @@ import argparse
 from datetime import datetime, timezone
 import json
 import logging
+import os
 from pathlib import Path
+import re
+import subprocess
 import sys
 import zipfile
 
@@ -133,16 +136,186 @@ def classify_tag_type(tag_name: str) -> str:
     return "🟢 Long Core"
 
 
-def generate_comparison_table(curr_metrics: dict, prev_metrics: dict | None, prev_date_str: str = "") -> str:
-    """Generate Markdown comparison table between current run and previous run."""
+def resolve_run_metadata(args, strat_name: str) -> dict:
+    """Resolve Git and environment metadata (version tag, commit SHA, run marker, URL)."""
+    meta = {
+        "version": getattr(args, "version", "") or os.environ.get("BOT_VERSION", ""),
+        "version_tag": "",
+        "commit_sha": getattr(args, "commit_sha", "") or os.environ.get("GITHUB_SHA", ""),
+        "commit_short": "",
+        "commit_msg": "",
+        "run_label": getattr(args, "run_label", "") or os.environ.get("RUN_LABEL", ""),
+        "run_id": getattr(args, "run_id", "") or os.environ.get("GITHUB_RUN_ID", ""),
+        "run_number": os.environ.get("GITHUB_RUN_NUMBER", ""),
+        "run_url": getattr(args, "run_url", "") or "",
+        "branch": os.environ.get("GITHUB_REF_NAME", ""),
+    }
+
+    # Resolve commit info
+    if not meta["commit_sha"]:
+        try:
+            res = subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=False)
+            if res.returncode == 0 and res.stdout.strip():
+                meta["commit_sha"] = res.stdout.strip()
+        except Exception:
+            pass
+    if meta["commit_sha"]:
+        meta["commit_short"] = meta["commit_sha"][:7]
+
+    # Resolve commit msg
+    try:
+        res = subprocess.run(["git", "log", "-1", "--pretty=%s"], capture_output=True, text=True, check=False)
+        if res.returncode == 0 and res.stdout.strip():
+            meta["commit_msg"] = res.stdout.strip()
+    except Exception:
+        pass
+
+    # Resolve version from git or strategy file
+    if not meta["version"]:
+        try:
+            res = subprocess.run(["git", "describe", "--tags", "--exact-match"], capture_output=True, text=True, check=False)
+            if res.returncode == 0 and res.stdout.strip():
+                meta["version"] = res.stdout.strip()
+            else:
+                res2 = subprocess.run(["git", "describe", "--tags", "--always"], capture_output=True, text=True, check=False)
+                if res2.returncode == 0 and res2.stdout.strip():
+                    meta["version"] = res2.stdout.strip()
+        except Exception:
+            pass
+
+    # Fallback to strategy file version string
+    if not meta["version"] or meta["version"] == meta["commit_short"]:
+        for strat_file in [Path(f"{strat_name}.py"), Path(f"user_data/strategies/{strat_name}.py")]:
+            if strat_file.exists():
+                try:
+                    with open(strat_file, "r", encoding="utf-8") as f:
+                        content = f.read()
+                        m = re.search(r"Version:\s*(v[0-9]+\.[0-9]+[^\n\r\(\)]*)", content)
+                        if m:
+                            meta["version"] = m.group(1).strip()
+                            break
+                except Exception:
+                    pass
+
+    if not meta["version"]:
+        meta["version"] = "v7.2"
+
+    m_tag = re.search(r"(v[0-9]+\.[0-9]+)", meta["version"])
+    meta["version_tag"] = m_tag.group(1) if m_tag else meta["version"]
+
+    if not meta["run_label"]:
+        if meta["run_number"]:
+            meta["run_label"] = f"{meta['version_tag']}-run-{meta['run_number']}"
+        else:
+            meta["run_label"] = f"{meta['version_tag']}-{meta['commit_short'] or 'local'}"
+
+    server_url = os.environ.get("GITHUB_SERVER_URL", "https://github.com")
+    repo = os.environ.get("GITHUB_REPOSITORY", "")
+    if repo and meta["run_id"] and not meta["run_url"]:
+        meta["run_url"] = f"{server_url}/{repo}/actions/runs/{meta['run_id']}"
+
+    return meta
+
+
+def generate_history_matrix(history_dir: Path, current_run: dict) -> str:
+    """Generate Markdown matrix comparing all historical runs (versions, commit, winrate, profit, etc.)."""
+    if not history_dir.exists():
+        return ""
+
+    json_files = sorted([f for f in history_dir.glob("backtest_*.json") if not f.name.endswith(".meta.json")])
+    if not json_files:
+        return ""
+
+    records = []
+    seen_signatures = set()
+
+    for f in json_files:
+        try:
+            with open(f, "r", encoding="utf-8") as fp:
+                rec = json.load(fp)
+                m = rec.get("metrics", {})
+                if not m or "total_trades" not in m:
+                    continue
+                sig = (
+                    round(m.get("winrate", 0), 4),
+                    round(m.get("profit_total_abs", 0), 2),
+                    m.get("total_trades", 0),
+                    rec.get("version_tag") or rec.get("version") or rec.get("date"),
+                )
+                if sig in seen_signatures:
+                    continue
+                seen_signatures.add(sig)
+                records.append(rec)
+        except Exception:
+            continue
+
+    if not records:
+        return ""
+
+    records.sort(key=lambda r: r.get("timestamp") or r.get("date") or "")
+    recent_records = records[-8:]
+
+    rows = []
+    curr_ts = current_run.get("timestamp", "")
+    curr_source = current_run.get("source_file", "")
+
+    for r in recent_records:
+        r_m = r.get("metrics", {})
+        r_ver = r.get("version_tag") or r.get("version") or "v7.0"
+        r_label = r.get("run_label") or r.get("version") or r.get("date", "N/A")
+        r_commit = (r.get("commit_short") or (r.get("commit_sha", "")[:7] if r.get("commit_sha") else "")) or "-"
+        r_date = r.get("date", "N/A")
+        r_wr = (r_m.get("winrate", 0.0) or 0.0) * 100
+        r_p_abs = r_m.get("profit_total_abs", 0.0) or 0.0
+        r_p_pct = (r_m.get("profit_total", 0.0) or 0.0) * 100
+        r_dd = (r_m.get("max_drawdown_account", 0.0) or 0.0) * 100
+        r_sharpe = r_m.get("sharpe", 0.0) or 0.0
+        r_pf = r_m.get("profit_factor", 0.0) or 0.0
+        r_trades = r_m.get("total_trades", 0)
+
+        is_current = (r.get("timestamp") == curr_ts) or (r.get("source_file") == curr_source and curr_source)
+        status_tag = "🎯 **HIỆN TẠI**" if is_current else "⚪ Đã lưu"
+
+        rows.append(
+            f"| `{r_label}` | **`{r_ver}`** | `{r_commit}` | {r_date} | "
+            f"**{r_wr:.2f}%** | {r_p_abs:+,.2f} USDT ({r_p_pct:+.1f}%) | "
+            f"{r_dd:.2f}% | {r_sharpe:.2f} | {r_pf:.2f} | `{r_trades}` | {status_tag} |"
+        )
+
+    matrix_table = f"""## 🏛️ Ma Trận Lịch Sử Đối Soát Giữa Các Lần Chạy (Multi-Run Version History Matrix)
+
+> *Bảng tổng hợp đối chiếu kết quả backtest qua từng phiên bản và lần chạy để tiện theo dõi tiến trình tối ưu hóa.*
+
+| Đánh dấu lần chạy (Run Marker) | Phiên bản | Commit | Ngày chạy | Tỷ lệ thắng (Winrate) | Lợi nhuận ròng | Max DD % | Sharpe | Profit Factor | Tổng lệnh | Trạng thái |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+""" + "\n".join(rows) + "\n"
+
+    return matrix_table
+
+
+def generate_comparison_table(
+    curr_metrics: dict,
+    prev_metrics: dict | None,
+    curr_meta: dict,
+    prev_meta: dict | None = None,
+    prev_date_str: str = "",
+) -> str:
+    """Generate Markdown comparison table between current run and previous run with version markers."""
+    curr_label = curr_meta.get("run_label") or curr_meta.get("version_tag") or "Current"
+    curr_commit = curr_meta.get("commit_short", "")
+    curr_header = f"Lần chạy này [{curr_label}{(' - ' + curr_commit) if curr_commit else ''}]"
+
     if not prev_metrics:
         return (
             "## ⚖️ So Sánh Hiệu Suất Với Lần Backtest Trước (Benchmark Comparison)\n\n"
-            "> [!NOTE]\n"
-            "> *Chưa có dữ liệu lần chạy trước trong lịch sử để đối chiếu. Đây là phiên chạy mốc chuẩn (Baseline Run).*\n"
+            f"> [!NOTE]\n"
+            f"> *Chưa có dữ liệu lần chạy trước trong lịch sử để đối chiếu. Lần chạy `{curr_label}` là mốc chuẩn (Baseline Run).*\n"
         )
 
     prev_m = prev_metrics.get("metrics", prev_metrics)
+    prev_label = (prev_meta.get("run_label") if prev_meta else None) or (prev_meta.get("version_tag") if prev_meta else None) or prev_date_str or "Previous"
+    prev_commit = (prev_meta.get("commit_short") if prev_meta else None) or ((prev_meta.get("commit_sha", "")[:7]) if prev_meta and prev_meta.get("commit_sha") else "")
+    prev_header = f"Lần trước [{prev_label}{(' - ' + prev_commit) if prev_commit else ''}]"
 
     c_winrate = (curr_metrics.get("winrate", 0.0) or 0.0) * 100
     p_winrate = (prev_m.get("winrate", 0.0) or 0.0) * 100
@@ -192,7 +365,7 @@ def generate_comparison_table(curr_metrics: dict, prev_metrics: dict | None, pre
 
     return f"""## ⚖️ So Sánh Hiệu Suất Với Lần Backtest Trước (Benchmark Comparison)
 
-| Chỉ số định lượng | Lần chạy này (Current) | Lần chạy trước{date_label} | Chênh lệch (Δ Delta) | Xu hướng |
+| Chỉ số định lượng | {curr_header} | {prev_header} | Chênh lệch (Δ Delta) | Xu hướng |
 | :--- | :--- | :--- | :--- | :--- |
 | **Tỷ lệ thắng (Winrate)** | **{c_winrate:.2f}%** | **{p_winrate:.2f}%** | {d_winrate} | {t_winrate} |
 | **Lợi nhuận ròng (Net Profit %)** | **{c_profit_pct:+.2f}%** | **{p_profit_pct:+.2f}%** | {d_profit_pct} | {t_profit_pct} |
@@ -214,6 +387,8 @@ def generate_markdown(
     date_display: str,
     source_filename: str,
     prev_run: dict | None,
+    curr_meta: dict,
+    history_dir: Path,
 ) -> str:
     """Generate exhaustive Markdown backtest report."""
     winrate = (s.get("winrate", 0.0) or 0.0) * 100
@@ -244,7 +419,10 @@ def generate_markdown(
 
     # 1. Comparison Section
     prev_date = prev_run.get("date", "") if prev_run else ""
-    comparison_section = generate_comparison_table(s, prev_run, prev_date)
+    comparison_section = generate_comparison_table(s, prev_run, curr_meta, prev_run, prev_date)
+
+    # 1.1 History Matrix Section
+    history_matrix = generate_history_matrix(history_dir, curr_meta)
 
     # 2. Position Breakdown (Long vs Short)
     long_trades = [t for t in trades if not t.get("is_short", False)]
@@ -437,17 +615,26 @@ def generate_markdown(
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
 """ + "\n".join(recent_rows) + "\n"
 
+    run_link = f"[{curr_meta['run_label']}]({curr_meta['run_url']})" if curr_meta.get("run_url") else f"`{curr_meta['run_label']}`"
+
     md = f"""# 📈 Báo Cáo Đánh Giá Hiệu Suất Backtest Toàn Diện (Comprehensive Quantitative Report)
 
-- **Chiến lược (Strategy)**: `{strat_name}`
-- **Thời gian đánh giá (Evaluation Date)**: `{date_display}`
-- **Cửa sổ Backtest (Timerange)**: `{timerange}`
-- **Tổng thời lượng (Duration)**: `{backtest_days} ngày`
-- **Mã nguồn dữ liệu (Source File)**: `{source_filename}`
+| Thông Tin Phiên Chạy | Chi Tiết | Đánh Dấu / Định Danh |
+| :--- | :--- | :--- |
+| 🏷️ **Phiên bản Chiến lược (Version)** | **`{curr_meta['version']}`** | `{curr_meta['version_tag']}` |
+| 🔖 **Git Commit** | `{curr_meta['commit_short'] or '-'}` | `{curr_meta['commit_msg'] or '-'}` |
+| 🚀 **Đánh dấu lần chạy (Run Marker)** | **{run_link}** | `Workflow #{curr_meta['run_number'] or 'local'}` |
+| 🤖 **Chiến lược (Strategy)** | `{strat_name}` | `Combined AI Engine` |
+| 📅 **Thời gian đánh giá (Evaluation Date)** | `{date_display}` | `UTC` |
+| ⏱️ **Cửa sổ Backtest (Timerange)** | `{timerange}` | `{backtest_days} ngày` |
+| 📁 **Tệp kết quả (Source File)** | `{source_filename}` | `Binance Futures 5m` |
 
 ---
 
 {comparison_section}
+---
+
+{history_matrix}
 ---
 
 ## 🎯 Chỉ Số Hiệu Suất Cốt Lõi (Executive Performance Metrics)
@@ -506,6 +693,11 @@ def main():
     parser.add_argument("--strategy", type=str, default=None, help="Strategy name")
     parser.add_argument("--output-json", type=Path, default=None, help="Destination for historical json")
     parser.add_argument("--output-md", type=Path, default=Path("reports/latest_report.md"), help="Destination markdown")
+    parser.add_argument("--version", type=str, default=None, help="Strategy version tag")
+    parser.add_argument("--commit-sha", type=str, default=None, help="Git commit SHA")
+    parser.add_argument("--run-label", type=str, default=None, help="Run marker/label for differentiation")
+    parser.add_argument("--run-id", type=str, default=None, help="GitHub Actions run ID")
+    parser.add_argument("--run-url", type=str, default=None, help="GitHub Actions run URL")
     args = parser.parse_args()
 
     result_file = args.result_file or find_latest_result(args.results_dir)
@@ -524,16 +716,31 @@ def main():
     history_dir.mkdir(parents=True, exist_ok=True)
     args.output_md.parent.mkdir(parents=True, exist_ok=True)
 
+    # Resolve run and version metadata
+    curr_meta = resolve_run_metadata(args, strat_name)
+    curr_meta["timestamp"] = timestamp_str
+    curr_meta["date"] = date_str
+    curr_meta["source_file"] = result_file.name
+
     # Find previous run before saving new one
     prev_run = find_previous_run(history_dir, current_source_file=result_file.name)
     if prev_run:
-        logger.info(f"Found previous historical run for benchmark comparison: date={prev_run.get('date')} source={prev_run.get('source_file')}")
+        p_label = prev_run.get('run_label') or prev_run.get('version') or prev_run.get('date')
+        logger.info(f"Found previous historical run for benchmark comparison: label={p_label} date={prev_run.get('date')} source={prev_run.get('source_file')}")
     else:
         logger.info("No prior benchmark run found in reports/history/. This run will establish the baseline.")
 
-    # 1. Save normalized historical JSON
+    # 1. Save normalized historical JSON with rich version & run metadata
     compact_history = {
         "strategy": strat_name,
+        "version": curr_meta["version"],
+        "version_tag": curr_meta["version_tag"],
+        "commit_sha": curr_meta["commit_sha"],
+        "commit_short": curr_meta["commit_short"],
+        "commit_msg": curr_meta["commit_msg"],
+        "run_label": curr_meta["run_label"],
+        "run_id": curr_meta["run_id"],
+        "run_url": curr_meta["run_url"],
         "date": date_str,
         "timestamp": timestamp_str,
         "source_file": result_file.name,
@@ -577,6 +784,8 @@ def main():
         date_display=date_display,
         source_filename=result_file.name,
         prev_run=prev_run,
+        curr_meta=curr_meta,
+        history_dir=history_dir,
     )
 
     with open(args.output_md, "w", encoding="utf-8") as f:

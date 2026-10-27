@@ -13,6 +13,14 @@ on:
         description: 'Strategy to evaluate'
         required: false
         default: 'NostalgiaForInfinityX8_Combined_AI'
+      version:
+        description: 'Strategy version tag (leave empty to auto-detect from Git)'
+        required: false
+        default: ''
+      run_label:
+        description: 'Custom run marker/label for comparison (e.g., v7.2-daily-eval)'
+        required: false
+        default: ''
 
 permissions:
   contents: write
@@ -29,6 +37,31 @@ jobs:
         with:
           fetch-depth: 0
           token: ${{ secrets.GH_PAT_TOKEN || secrets.GITHUB_TOKEN }}
+
+      - name: Determine Version & Backtest Run Context
+        id: meta
+        run: |
+          GIT_TAG=$(git describe --tags --exact-match 2>/dev/null || git describe --tags --always 2>/dev/null || echo "v7.2")
+          SHORT_SHA=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+          COMMIT_MSG=$(git log -1 --pretty=%s 2>/dev/null | tr -d '\n' || echo "daily backtest")
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+          VERSION="${{ github.event.inputs.version }}"
+          if [ -z "$VERSION" ]; then
+            VERSION="$GIT_TAG"
+          fi
+
+          LABEL="${{ github.event.inputs.run_label }}"
+          if [ -z "$LABEL" ]; then
+            LABEL="${VERSION}-run-${{ github.run_number }}"
+          fi
+
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "short_sha=${SHORT_SHA}" >> $GITHUB_OUTPUT
+          echo "run_label=${LABEL}" >> $GITHUB_OUTPUT
+          echo "run_url=${RUN_URL}" >> $GITHUB_OUTPUT
+          echo "commit_msg=${COMMIT_MSG}" >> $GITHUB_OUTPUT
+          echo "📋 Context resolved: Version=${VERSION}, Label=${LABEL}, SHA=${SHORT_SHA}"
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -70,7 +103,29 @@ jobs:
           python scripts/run_eval_backtest.py \
             --config configs/backtest_config.json \
             --strategy ${{ github.event.inputs.strategy || 'NostalgiaForInfinityX8_Combined_AI' }} \
-            --days ${{ github.event.inputs.days || 180 }}
+            --days ${{ github.event.inputs.days || 180 }} \
+            --version "${{ steps.meta.outputs.version }}" \
+            --commit-sha "${{ steps.meta.outputs.short_sha }}" \
+            --run-label "${{ steps.meta.outputs.run_label }}" \
+            --run-id "${{ github.run_id }}" \
+            --run-url "${{ steps.meta.outputs.run_url }}"
+
+      - name: Publish Step Summary to GitHub Actions UI
+        if: always()
+        run: |
+          if [ -f reports/latest_report.md ]; then
+            cat reports/latest_report.md >> $GITHUB_STEP_SUMMARY
+          fi
+
+      - name: Upload Backtest & Report Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: backtest-report-${{ steps.meta.outputs.version }}-${{ steps.meta.outputs.short_sha }}-run${{ github.run_number }}
+          path: |
+            reports/
+            user_data/backtest_results/
+          retention-days: 30
 
       - name: Publish Evaluation Report to eval/daily-report branch
         env:
@@ -80,12 +135,12 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
           git checkout -B eval/daily-report
-          git add reports/history/ reports/latest_report.md
+          git add reports/history/ reports/latest_report.md reports/latest_trades.csv reports/tag_analysis_report.md reports/full_trade_journal_200usd.md
 
           if git diff --staged --quiet; then
             echo "No changes in performance reports to commit."
           else
-            git commit -m "chore(eval): automated daily backtest report [$(date -u +'%Y-%m-%d')]"
+            git commit -m "chore(eval): backtest report for ${{ steps.meta.outputs.version }} (${{ steps.meta.outputs.short_sha }}) [run #${{ github.run_number }}]"
             git push origin eval/daily-report --force
             echo "✅ Successfully published latest report to eval/daily-report branch."
           fi

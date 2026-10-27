@@ -1,16 +1,20 @@
 # 📈 Báo Cáo Đánh Giá Hiệu Suất Backtest Toàn Diện (Comprehensive Quantitative Report)
 
-- **Chiến lược (Strategy)**: `NostalgiaForInfinityX8_Combined_AI`
-- **Thời gian đánh giá (Evaluation Date)**: `2026-10-27 11:55:35 UTC`
-- **Cửa sổ Backtest (Timerange)**: `20260430-20261027`
-- **Tổng thời lượng (Duration)**: `176 ngày`
-- **Mã nguồn dữ liệu (Source File)**: `backtest-result-2026-10-27_18-52-30.zip`
+| Thông Tin Phiên Chạy | Chi Tiết | Đánh Dấu / Định Danh |
+| :--- | :--- | :--- |
+| 🏷️ **Phiên bản Chiến lược (Version)** | **`v7.2`** | `v7.2` |
+| 🔖 **Git Commit** | `12c4e69` | `feat: release v7.2 with 3 new enter short tags 741, 742, 743 (Tag 743 achieves 100% WR and ROE >= 5.6% - 6.75%, profit +1044.41 USDT)` |
+| 🚀 **Đánh dấu lần chạy (Run Marker)** | **`v7.2-new-short-tags`** | `Workflow #local` |
+| 🤖 **Chiến lược (Strategy)** | `NostalgiaForInfinityX8_Combined_AI` | `Combined AI Engine` |
+| 📅 **Thời gian đánh giá (Evaluation Date)** | `2026-10-27 13:30:32 UTC` | `UTC` |
+| ⏱️ **Cửa sổ Backtest (Timerange)** | `20260430-20261027` | `176 ngày` |
+| 📁 **Tệp kết quả (Source File)** | `backtest-result-2026-10-27_18-52-30.zip` | `Binance Futures 5m` |
 
 ---
 
 ## ⚖️ So Sánh Hiệu Suất Với Lần Backtest Trước (Benchmark Comparison)
 
-| Chỉ số định lượng | Lần chạy này (Current) | Lần chạy trước (20261027) | Chênh lệch (Δ Delta) | Xu hướng |
+| Chỉ số định lượng | Lần chạy này [v7.2-new-short-tags - 12c4e69] | Lần trước [v7.1-relief-rejection - 56b0067] | Chênh lệch (Δ Delta) | Xu hướng |
 | :--- | :--- | :--- | :--- | :--- |
 | **Tỷ lệ thắng (Winrate)** | **97.08%** | **97.06%** | `+0.02%` | 🟢 Cải thiện |
 | **Lợi nhuận ròng (Net Profit %)** | **+522.21%** | **+518.86%** | `+3.34%` | 🟢 Cải thiện |
@@ -23,6 +27,23 @@
 | **Chuỗi lệnh thua dài nhất** | **1 trades** | **1 trades** | 0.00 lệnh | ⚪ Tương đương |
 | **Kỳ vọng toán học (Expectancy)** | **7.6234** | **7.6303** | `-0.01` | 🔴 Suy giảm |
 | **Hệ số Calmar (Calmar Ratio)** | **2789.50** | **2772.86** | `+16.64` | 🟢 Cải thiện |
+
+---
+
+## 🏛️ Ma Trận Lịch Sử Đối Soát Giữa Các Lần Chạy (Multi-Run Version History Matrix)
+
+> *Bảng tổng hợp đối chiếu kết quả backtest qua từng phiên bản và lần chạy để tiện theo dõi tiến trình tối ưu hóa.*
+
+| Đánh dấu lần chạy (Run Marker) | Phiên bản | Commit | Ngày chạy | Tỷ lệ thắng (Winrate) | Lợi nhuận ròng | Max DD % | Sharpe | Profit Factor | Tổng lệnh | Trạng thái |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| `20261027` | **`v7.0`** | `-` | 20261027 | **94.20%** | +936.17 USDT (+468.1%) | 4.50% | 11.08 | 21.54 | `138` | ⚪ Đã lưu |
+| `20261027` | **`v7.0`** | `-` | 20261027 | **92.75%** | +916.30 USDT (+458.2%) | 3.52% | 11.06 | 20.11 | `138` | ⚪ Đã lưu |
+| `20261027` | **`v7.0`** | `-` | 20261027 | **89.93%** | +838.73 USDT (+419.4%) | 2.97% | 10.43 | 15.48 | `139` | ⚪ Đã lưu |
+| `20261027` | **`v7.0`** | `-` | 20261027 | **76.01%** | +1,056.87 USDT (+528.4%) | 23.23% | 13.55 | 1.74 | `717` | ⚪ Đã lưu |
+| `v7.0-baseline` | **`v7.0`** | `1911385` | 20261027 | **95.59%** | +988.89 USDT (+494.4%) | 2.03% | 11.24 | 26.38 | `136` | ⚪ Đã lưu |
+| `v7.1-relief-rejection` | **`v7.1`** | `56b0067` | 20261027 | **97.06%** | +1,037.73 USDT (+518.9%) | 2.03% | 11.55 | 39.79 | `136` | ⚪ Đã lưu |
+| `20261027` | **`v7.0`** | `-` | 20261027 | **97.08%** | +1,044.41 USDT (+522.2%) | 2.03% | 11.59 | 39.95 | `137` | 🎯 **HIỆN TẠI** |
+| `v7.2-new-short-tags` | **`v7.2`** | `12c4e69` | 20261027 | **97.08%** | +1,044.41 USDT (+522.2%) | 2.03% | 11.59 | 39.95 | `137` | 🎯 **HIỆN TẠI** |
 
 ---
 
