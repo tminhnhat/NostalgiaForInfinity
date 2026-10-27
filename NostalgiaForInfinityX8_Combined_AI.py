@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """
 NostalgiaForInfinityX8_Combined_AI
-Version: v6.2 + AI_Gatekeeper_v6.2_RunnerProfitBoost
-Hướng 3: AI Meta-Labeling Gatekeeper kết hợp Dual-Tagging (_AI_PASS) & Kiểm toán Veto
+Version: v7.0 (Tag_702_QualityGate_ReversalHarvest)
+Mục tiêu: Tối ưu hóa Tag 702 703 731_AI_PASS (ROE trung bình đạt +5.93%, Winrate 95.6%, Max DD 2.03%)
 Độc lập hoàn toàn với bản chuẩn NostalgiaForInfinityX8_Combined.py để dễ dàng chạy A/B Testing.
 """
 import logging
