@@ -182,6 +182,8 @@ def main():
     parser.add_argument("--output-dir", type=Path, default=Path("user_data/data/binance"))
     parser.add_argument("--days", type=int, default=None, help="Days of history to download")
     parser.add_argument("--workers", type=int, default=16, help="Parallel download threads")
+    parser.add_argument("--pairs", nargs="*", default=None, help="Limit download to specific pairs")
+    parser.add_argument("--skip-existing", action="store_true", help="Skip downloading if pair/timeframe file already exists")
     args = parser.parse_args()
 
     cfg = load_config(args.config)
@@ -190,7 +192,10 @@ def main():
     is_futures = (trading_mode == "futures")
     market = "futures/um" if is_futures else "spot"
 
-    pairs = cfg.get("exchange", {}).get("pair_whitelist", []) or cfg.get("pairs", [])
+    if args.pairs:
+        pairs = args.pairs
+    else:
+        pairs = cfg.get("exchange", {}).get("pair_whitelist", []) or cfg.get("pairs", [])
     timeframes = list(dict.fromkeys([cfg.get("timeframe", "5m"), "15m", "1h", "4h", "1d"]))
 
     now_utc = datetime.now(timezone.utc)
@@ -199,12 +204,20 @@ def main():
         for d in range(1, days + 1)
     ]
 
+    target_dir = args.output_dir / "futures" if is_futures else args.output_dir
     logger.info(f"Configuration: mode={trading_mode}, market={market}")
     logger.info(f"Starting download for {len(pairs)} pairs across {len(timeframes)} timeframes ({days} days)...")
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
     for pair in pairs:
         for tf in timeframes:
+            pair_filename_base = pair.replace("/", "_").replace(":", "_")
+            suffix = "-futures" if is_futures else ""
+            target_feather = target_dir / f"{pair_filename_base}-{tf}{suffix}.feather"
+            if args.skip_existing and target_feather.exists() and target_feather.stat().st_size > 10000:
+                logger.info(f"Skipping {target_feather.name} (already exists)")
+                continue
+
             process_pair_timeframe(
                 pair=pair,
                 tf=tf,
@@ -215,7 +228,6 @@ def main():
                 max_workers=args.workers,
             )
 
-    target_dir = args.output_dir / "futures" if is_futures else args.output_dir
     feather_count = len(list(target_dir.glob("*.feather")))
     parquet_count = len(list(target_dir.glob("*.parquet")))
     logger.info(f"Download completed successfully. {feather_count} feather & {parquet_count} parquet files in {target_dir}")

@@ -30,6 +30,7 @@ jobs:
   ingest_and_backtest:
     name: Download Candles, Backtest on GitHub Runner & Publish Report
     runs-on: ubuntu-latest
+    timeout-minutes: 90
 
     steps:
       - name: Checkout repository
@@ -86,13 +87,23 @@ jobs:
           python -m pip install --upgrade pip
           pip install TA-Lib freqtrade pyarrow fastparquet pandas lightgbm joblib scikit-learn
 
+      - name: Cache Binance Candles Data
+        uses: actions/cache@v4
+        with:
+          path: user_data/data/binance
+          key: binance-candles-${{ runner.os }}-${{ hashFiles('configs/backtest_config.json') }}-${{ github.run_id }}
+          restore-keys: |
+            binance-candles-${{ runner.os }}-${{ hashFiles('configs/backtest_config.json') }}-
+            binance-candles-${{ runner.os }}-
+
       - name: Download Target Candles from Binance Vision
         run: |
           python scripts/download_candles.py \
             --config configs/backtest_config.json \
             --days ${{ github.event.inputs.days || 180 }} \
             --output-dir user_data/data/binance \
-            --workers 16
+            --workers 24 \
+            --skip-existing
 
       - name: Apply Offline Markets Patch (Bypass US IP 451)
         run: |

@@ -72,6 +72,7 @@ def main():
         "--timerange", timerange,
         "--timeframe", "5m",
         "--export", "trades",
+        "--cache", "none",
         "--breakdown", "day",
     ])
 
