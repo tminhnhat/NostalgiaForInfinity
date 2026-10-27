@@ -596,8 +596,9 @@ class NostalgiaForInfinityX8_ShortSignals:
         retest_confirmed = (high >= ema_9 * 0.997) & (close < ema_9)
         trigger_breakdown = cond_703 & cond_731 & (cond_702 | cond_701) & retest_confirmed
 
-        # Setup 3: Relief Rejection Confluence (EMA21 Rejection đi kèm BTC dump VÀ MACD đà giảm)
-        trigger_rejection = cond_721 & cond_731 & cond_702 if self.enable_short_relief_rejection else np.zeros(n_rows, dtype=bool)
+        # Setup 3: Relief Bounce Rejection tại cản động EMA 21 & EMA 50 (Sell the Rip)
+        # Nâng cấp: Bắt nhịp từ chối cản động khi giá hồi test EMA 21 / EMA 50, nến đỏ có râu trên xả dài
+        trigger_rejection = (cond_721 | cond_724) & cond_731 & (~close_above_ema200_1h) if self.enable_short_relief_rejection else np.zeros(n_rows, dtype=bool)
 
         # Setup 4: Scalp Pullback Confluence (StochRSI cross-down từ vùng cao trong Ribbon downtrend - 100% Winrate)
         trigger_scalp = cond_722 & cond_703 & cond_731

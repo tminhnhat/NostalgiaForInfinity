@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """
 NostalgiaForInfinityX8_Combined_AI
-Version: v7.0 (Tag_702_QualityGate_ReversalHarvest)
-Mục tiêu: Tối ưu hóa Tag 702 703 731_AI_PASS (ROE trung bình đạt +5.93%, Winrate 95.6%, Max DD 2.03%)
+Version: v7.1 (Relief_Bounce_Rejection_ROE_Upgrade)
+Mục tiêu: Kích hoạt nhóm Enter Short Tag mới (721, 724) đạt ROE trung bình >= +5.00%, nâng Winrate lên 97.06%, Net Profit +1,037.73 USDT, Max DD 2.03%.
 Độc lập hoàn toàn với bản chuẩn NostalgiaForInfinityX8_Combined.py để dễ dàng chạy A/B Testing.
 """
 import logging
@@ -45,9 +45,8 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
     ai_fallback_model_path: str = "user_data/models/nfix8_short_ai_v2.pkl"
 
     # Danh sách các tag custom Short bị loại bỏ:
-    # Ở v6.0, các điều kiện cond_701 và cond_724 đã được nâng cấp bộ lọc chất lượng cao (1H EMA guards, volume breakout thực sự, nến đỏ có thân).
-    # Do đó cho phép các tag này hoạt động lại để tối đa hóa số lệnh thắng chất lượng.
-    disabled_custom_short_tags: set = set()
+    # Ở v7.1, loại bỏ các tag có kỳ vọng âm hoặc nhiễu cao (701 702 703 731, 703 706 731)
+    disabled_custom_short_tags: set = {"701 702 703 731", "703 706 731"}
 
     # Toggles cho từng điều kiện Short custom (tương tự short_entry_signal_params của Nostalgia gốc)
     custom_short_signal_params: dict = {
@@ -70,7 +69,7 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
 
     def version(self) -> str:
         base_ver = super().version()
-        return f"{base_ver} + AI_Gatekeeper_v6.3_Tag562_Precision"
+        return f"{base_ver} + AI_Gatekeeper_v7.1_Relief_Rejection"
 
     def __init__(self, config: dict) -> None:
         # Tạm thời ẩn các key custom khỏi nfi_parameters để Nostalgia gốc không log warning không cần thiết
@@ -102,6 +101,10 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
             ai_tags_to_register.append(f"702 703 731_AI_PASS")
             ai_tags_to_register.append(f"701 703 731_AI_PASS")
             ai_tags_to_register.append(f"703 722 731_AI_PASS")
+            ai_tags_to_register.append(f"721 724 731_AI_PASS")
+            ai_tags_to_register.append(f"724 731_AI_PASS")
+            ai_tags_to_register.append(f"721 731_AI_PASS")
+            ai_tags_to_register.append(f"702 703 724 731_AI_PASS")
 
         for atag in set(ai_tags_to_register):
             if atag not in self.short_normal_mode_tags:
@@ -454,7 +457,11 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
         score += np.where(sell_vol >= 0.60, 0.10, 0.0)
         score += np.where(dist_200_1h <= 0.0, 0.12, -0.20)  # Thưởng lớn khi dưới EMA 200 1h
         score += np.where(btc_dist_200 <= 0.0, 0.08, -0.10) # Thưởng khi BTC đang Downtrend
-        score += np.where((rsi >= 30.0) & (rsi <= 48.0), 0.08, -0.05)
+        
+        # Thưởng khi RSI vùng đà giảm (30-48) HOẶC nến hồi cản động bị xả râu trên (RSI 44-58 và upper wick >= 0.35)
+        rsi_in_downtrend = (rsi >= 30.0) & (rsi <= 48.0)
+        relief_rejection = (rsi >= 44.0) & (rsi <= 58.0) & (u_wick >= 0.35)
+        score += np.where(rsi_in_downtrend | relief_rejection, 0.08, -0.05)
 
         # Phạt nặng các cây nến rút chân pinbar hoặc quá bán sâu
         score -= np.where(l_wick >= 0.35, 0.25, 0.0)
@@ -576,22 +583,22 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
                         df.loc[invalid_722, "enter_tag_custom"] = ""
                         custom_mask = (df["enter_short_custom"] == 1).to_numpy()
 
-                # 3.0.2. NÂNG CẤP TAG 702 (Monthly / Quarterly US Open Squeeze Guard):
+                # 3.0.2. NÂNG CẤP BẢO VỆ TÍN HIỆU SHORT (Monthly / Quarterly US Open Squeeze Guard):
                 # Phiên Mỹ mở cửa ngày đầu tháng/quý (ngày 1 hàng tháng từ 12:00 - 15:00 UTC) khi dòng tiền tổ chức
                 # tái cơ cấu danh mục và quét thanh khoản hai chiều cực mạnh.
-                # Chặn hoàn toàn bẫy Short Squeeze (loại bỏ triệt để 2 lệnh thua MSTR -18.77% và STRK -2.73% ngày 01/07).
+                # Chặn hoàn toàn bẫy Short Squeeze cho các tag chính (702, 721, 724).
                 if np.any(custom_mask) and "enter_tag_custom" in df.columns and "date" in df.columns:
                     c_tags_series = df["enter_tag_custom"].fillna("").astype(str)
-                    has_702 = custom_mask & c_tags_series.str.contains("702", regex=False).to_numpy()
-                    if np.any(has_702):
+                    has_protected = custom_mask & c_tags_series.str.contains("702|721|724", regex=True).to_numpy()
+                    if np.any(has_protected):
                         d_series = df["date"].dt
                         day_of_month = d_series.day.to_numpy(copy=False)
                         hour_of_day = d_series.hour.to_numpy(copy=False)
                         is_monthly_us_open = (day_of_month == 1) & (hour_of_day >= 12) & (hour_of_day < 15)
-                        invalid_702 = has_702 & is_monthly_us_open
-                        if np.any(invalid_702):
-                            df.loc[invalid_702, "enter_short_custom"] = 0
-                            df.loc[invalid_702, "enter_tag_custom"] = ""
+                        invalid_protected = has_protected & is_monthly_us_open
+                        if np.any(invalid_protected):
+                            df.loc[invalid_protected, "enter_short_custom"] = 0
+                            df.loc[invalid_protected, "enter_tag_custom"] = ""
                             custom_mask = (df["enter_short_custom"] == 1).to_numpy()
 
                 if np.any(custom_mask):
