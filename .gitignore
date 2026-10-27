@@ -140,7 +140,7 @@ user_data/data/*.json
 # Don't commit candle data
 user_data/data/*.json
 
-user_data/*.json
+#user_data/*.json
 user_data/data/*/*.json
 user_data/data/*/*.json.gz
 user_data/data
@@ -157,7 +157,7 @@ user_data/freqaimodels
 artifacts/
 
 # Don't commit configs
-config*.json
+#config*.json
 
 # Don't commit any sqlite file which contains your tradings
 
