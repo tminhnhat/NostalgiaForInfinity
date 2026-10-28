@@ -72,7 +72,7 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
 
     def version(self) -> str:
         base_ver = super().version()
-        return f"{base_ver} + AI_Gatekeeper_v7.2_New_Short_Tags_741_742_743"
+        return f"{base_ver} + AI_Gatekeeper_v7.3_Optimized_Short_Tag_741"
 
     def __init__(self, config: dict) -> None:
         # Tạm thời ẩn các key custom khỏi nfi_parameters để Nostalgia gốc không log warning không cần thiết
@@ -784,10 +784,11 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
             trade_duration_hours = (current_time - trade.open_date_utc).total_seconds() / 3600.0
 
             # 0. AI STRUCTURAL EARLY INVALIDATION CUT:
-            # Cắt giảm rủi ro sớm khi vị thế Short âm >= -17.5% ROE (-3.5% spot 5x) VÀ giá vượt lên trên 1H EMA 50
-            # (hoặc âm >= -22.5% và vượt EMA 200 1h). Giúp thoát hiểm sớm MSTR ở -18.2% ROE (tiết kiệm ~19 USDT)
-            # mà không cắt nhầm bất kỳ lệnh nào trong 23 lệnh thắng (GRASS max adverse chỉ -15.9%, SHIB -15.8%).
-            if current_profit <= -0.175 and hasattr(self, "dp") and self.dp is not None:
+            # Cắt giảm rủi ro sớm khi vị thế Short âm vượt lên trên 1H EMA 50.
+            # Đối với Tag 741 (bắt đỉnh SFP): Thoát ngay tại ngưỡng -12.5% ROE (tiết kiệm ~40% mức lỗ mỗi lệnh)
+            # Đối với các tag Short khác: Thoát tại -17.5% ROE.
+            cut_threshold = -0.125 if "741" in orig_tag else -0.175
+            if current_profit <= cut_threshold and hasattr(self, "dp") and self.dp is not None:
                 df_pair, _ = self.dp.get_analyzed_dataframe(pair, self.timeframe)
                 if len(df_pair) > 0:
                     current_rows = df_pair.loc[df_pair["date"] <= current_time]

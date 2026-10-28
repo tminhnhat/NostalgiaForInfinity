@@ -591,20 +591,22 @@ class NostalgiaForInfinityX8_ShortSignals:
             & (~btc_bullish)                              # Không short khi BTC đang tăng dốc
         )
 
-        # TAG 741: Macro Liquidity Sweep & Fakeout Rejection (SFP)
-        shift_high_12 = np.roll(rolling_high_12, 1)
+        # TAG 741: Macro Liquidity Sweep & Fakeout Rejection (SFP) - Tối ưu hóa v7.3
+        shift_high_24 = np.roll(rolling_high_24, 1)
         cond_741 = (
             (volume > 0)
             & (ema_50 < ema_200)                          # Downtrend tổng thể
             & (~close_above_ema200_1h)                    # Dưới 1H EMA 200
-            & (high > shift_high_12)                      # Quét đỉnh 12 nến (1h)
-            & (close < shift_high_12)                     # Đóng cửa thất bại dưới đỉnh cũ (Fakeout rõ ràng)
+            & (high > shift_high_24)                      # NÂNG CẤP v7.3: Quét đỉnh 24 nến (2h), loại bỏ bẫy quét nến vi mô 1h
+            & (close < shift_high_24)                     # Đóng cửa thất bại dưới đỉnh cũ (Fakeout rõ ràng)
             & (close < open_px)                           # BẮT BUỘC NẾN ĐỎ
-            & (upper_wick_ratio >= 0.38)                  # Râu trên dài từ chối giá
+            & (close < ema_21)                            # NÂNG CẤP v7.3: Đóng cửa dưới EMA 21 xác nhận phe gấu áp đảo
+            & (upper_wick_ratio >= 0.40)                  # NÂNG CẤP v7.3: Râu trên dài từ chối giá (nâng từ 0.38 lên 0.40)
             & (vol_spike_ratio >= 1.25)                   # Volume quét thanh khoản cao
             & (vol_spike_ratio <= 4.50)                   # Giới hạn trần volume
-            & (rsi_14 >= 44.0) & (rsi_14 <= 68.0)         # Vùng hồi phục kỹ thuật
+            & (rsi_14 >= 48.0) & (rsi_14 <= 65.0)         # Vùng hồi phục kỹ thuật chuẩn
             & (~rsi_1h_oversold)
+            & (~rsi_1h_overbought)                        # NÂNG CẤP v7.3: Chặn coin đang có 1h RSI quá mua / pump mạnh
             & (~is_saturday)
             & (~is_sunday)
             & (~is_monday_morning)
@@ -691,12 +693,12 @@ class NostalgiaForInfinityX8_ShortSignals:
         trigger_bb_rejection = cond_723 & cond_731
 
         # Setup 10: Macro Liquidity Sweep Fakeout Rejection (Tag 741)
-        # Bắt nhịp quét thanh khoản đỉnh hồi trong downtrend đồng thuận với đà suy yếu của BTC
-        trigger_741 = cond_741 & (btc_dumping | (ema_50 < ema_200)) & (~close_above_ema200_1h) if self.enable_short_liquidity_sweep else np.zeros(n_rows, dtype=bool)
+        # NÂNG CẤP v7.3: Bắt buộc đồng pha đà xả BTC (btc_dumping hoặc cond_731), loại bỏ hoàn toàn bypass ema_50 < ema_200
+        trigger_741 = cond_741 & (btc_dumping | cond_731) & (~close_above_ema200_1h) if self.enable_short_liquidity_sweep else np.zeros(n_rows, dtype=bool)
 
         # Setup 11: Fair Value Gap Retest Failure (Tag 742)
-        # Bắt nhịp hồi lấp khoảng trống FVG chạm cản EMA 21 bị từ chối
-        trigger_742 = cond_742 & (btc_dumping | (ema_50 < ema_200)) & (~close_above_ema200_1h) if self.enable_short_fvg_rejection else np.zeros(n_rows, dtype=bool)
+        # NÂNG CẤP v7.3: Bắt nhịp hồi test cản EMA 21 bị từ chối đồng thuận đà xả BTC
+        trigger_742 = cond_742 & (btc_dumping | cond_731) & (~close_above_ema200_1h) if self.enable_short_fvg_rejection else np.zeros(n_rows, dtype=bool)
 
         # Setup 12: Market Structure Shift Breakdown (Tag 743)
         # Gãy cấu trúc vi mô xác nhận động lượng xả
