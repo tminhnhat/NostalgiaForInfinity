@@ -3,10 +3,10 @@
 | Thông Tin Phiên Chạy | Chi Tiết | Đánh Dấu / Định Danh |
 | :--- | :--- | :--- |
 | 🏷️ **Phiên bản Chiến lược (Version)** | **`v7.2`** | `v7.2` |
-| 🔖 **Git Commit** | `d003c7e` | `feat(config): sync configs, gitignore, and 101-pair backtest evaluation report` |
+| 🔖 **Git Commit** | `9c41eeb` | `chore(report): latest 180-day quantitative backtest evaluation on 101 pairs` |
 | 🚀 **Đánh dấu lần chạy (Run Marker)** | **`v7.2-latest-180d-101pairs`** | `Workflow #local` |
 | 🤖 **Chiến lược (Strategy)** | `NostalgiaForInfinityX8_Combined_AI` | `Combined AI Engine` |
-| 📅 **Thời gian đánh giá (Evaluation Date)** | `2026-10-28 09:47:37 UTC` | `UTC` |
+| 📅 **Thời gian đánh giá (Evaluation Date)** | `2026-10-28 09:57:01 UTC` | `UTC` |
 | ⏱️ **Cửa sổ Backtest (Timerange)** | `20260501-20261028` | `179 ngày` |
 | 📁 **Tệp kết quả (Source File)** | `backtest-result-2026-10-28_16-47-01.zip` | `Binance Futures 5m` |
 
@@ -14,7 +14,7 @@
 
 ## ⚖️ So Sánh Hiệu Suất Với Lần Backtest Trước (Benchmark Comparison)
 
-| Chỉ số định lượng | Lần chạy này [v7.2-latest-180d-101pairs - d003c7e] | Lần trước [v7.2-upstream163-101pairs - b2b4429] | Chênh lệch (Δ Delta) | Xu hướng |
+| Chỉ số định lượng | Lần chạy này [v7.2-latest-180d-101pairs - 9c41eeb] | Lần trước [v7.2-upstream163-101pairs - b2b4429] | Chênh lệch (Δ Delta) | Xu hướng |
 | :--- | :--- | :--- | :--- | :--- |
 | **Tỷ lệ thắng (Winrate)** | **84.77%** | **85.02%** | `-0.25%` | 🔴 Suy giảm |
 | **Lợi nhuận ròng (Net Profit %)** | **+923.80%** | **+881.20%** | `+42.60%` | 🟢 Cải thiện |
@@ -43,7 +43,7 @@
 | `20261027` | **`v7.0`** | `-` | 20261027 | **97.08%** | +1,044.41 USDT (+522.2%) | 2.03% | 11.59 | 39.95 | `137` | ⚪ Đã lưu |
 | `v7.2-new-short-tags` | **`v7.2`** | `12c4e69` | 20261027 | **97.08%** | +1,044.41 USDT (+522.2%) | 2.03% | 11.59 | 39.95 | `137` | ⚪ Đã lưu |
 | `v7.2-upstream163-101pairs` | **`v7.2`** | `b2b4429` | 20261027 | **85.02%** | +1,762.39 USDT (+881.2%) | 6.56% | 14.39 | 2.98 | `434` | ⚪ Đã lưu |
-| `v7.2-latest-180d-101pairs` | **`v7.2`** | `d003c7e` | 20261028 | **84.77%** | +1,847.60 USDT (+923.8%) | 6.57% | 14.53 | 2.97 | `440` | 🎯 **HIỆN TẠI** |
+| `v7.2-latest-180d-101pairs` | **`v7.2`** | `9c41eeb` | 20261028 | **84.77%** | +1,847.60 USDT (+923.8%) | 6.57% | 14.53 | 2.97 | `440` | 🎯 **HIỆN TẠI** |
 
 ---
 

@@ -792,6 +792,14 @@ def main():
         f.write(md_content)
     logger.info(f"Saved comprehensive latest markdown report: {args.output_md}")
 
+    # 3. Save latest_trades.csv
+    trades = strat_metrics.get("trades", [])
+    if trades:
+        import pandas as pd
+        trades_csv_path = args.output_md.parent / "latest_trades.csv"
+        pd.DataFrame(trades).to_csv(trades_csv_path, index=False)
+        logger.info(f"Saved synchronized latest trades CSV ({len(trades)} trades): {trades_csv_path}")
+
 
 if __name__ == "__main__":
     main()
