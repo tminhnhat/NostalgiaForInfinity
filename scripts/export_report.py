@@ -136,6 +136,26 @@ def classify_tag_type(tag_name: str) -> str:
     return "🟢 Long Core"
 
 
+def detect_strategy_version(strat_name: str) -> str | None:
+    """Detect version string from strategy file (def version or docstring)."""
+    for strat_file in [Path(f"{strat_name}.py"), Path(f"user_data/strategies/{strat_name}.py")]:
+        if strat_file.exists():
+            try:
+                with open(strat_file, "r", encoding="utf-8") as f:
+                    content = f.read()
+                    # Priority A: Check def version(self) or AI_Gatekeeper_vX.Y
+                    m_gate = re.search(r"AI_Gatekeeper_(v[0-9]+(?:\.[0-9]+)*)", content)
+                    if m_gate:
+                        return m_gate.group(1).strip()
+                    # Priority B: Check docstring Version: vX.Y
+                    m_doc = re.search(r"Version:\s*(v[0-9]+(?:\.[0-9]+)*[^\n\r\(\)]*)", content)
+                    if m_doc:
+                        return m_doc.group(1).strip()
+            except Exception:
+                pass
+    return None
+
+
 def resolve_run_metadata(args, strat_name: str) -> dict:
     """Resolve Git and environment metadata (version tag, commit SHA, run marker, URL)."""
     meta = {
@@ -170,35 +190,39 @@ def resolve_run_metadata(args, strat_name: str) -> dict:
     except Exception:
         pass
 
-    # Resolve version from git or strategy file
+    # Resolve version:
+    # 1. Exact git tag on HEAD commit (if developer tagged HEAD)
     if not meta["version"]:
         try:
             res = subprocess.run(["git", "describe", "--tags", "--exact-match"], capture_output=True, text=True, check=False)
             if res.returncode == 0 and res.stdout.strip():
                 meta["version"] = res.stdout.strip()
-            else:
-                res2 = subprocess.run(["git", "describe", "--tags", "--always"], capture_output=True, text=True, check=False)
-                if res2.returncode == 0 and res2.stdout.strip():
-                    meta["version"] = res2.stdout.strip()
         except Exception:
             pass
 
-    # Fallback to strategy file version string
+    # 2. Strategy file inspection (def version or docstring)
+    if not meta["version"]:
+        strat_ver = detect_strategy_version(strat_name)
+        if strat_ver:
+            meta["version"] = strat_ver
+
+    # 3. Commit message version hint (e.g., "(v7.4)" or "v7.4")
+    if not meta["version"] and meta["commit_msg"]:
+        m_msg = re.search(r"\b(v[0-9]+\.[0-9]+)\b", meta["commit_msg"])
+        if m_msg:
+            meta["version"] = m_msg.group(1).strip()
+
+    # 4. Fallback to git describe --tags --always only if needed
     if not meta["version"] or meta["version"] == meta["commit_short"]:
-        for strat_file in [Path(f"{strat_name}.py"), Path(f"user_data/strategies/{strat_name}.py")]:
-            if strat_file.exists():
-                try:
-                    with open(strat_file, "r", encoding="utf-8") as f:
-                        content = f.read()
-                        m = re.search(r"Version:\s*(v[0-9]+\.[0-9]+[^\n\r\(\)]*)", content)
-                        if m:
-                            meta["version"] = m.group(1).strip()
-                            break
-                except Exception:
-                    pass
+        try:
+            res2 = subprocess.run(["git", "describe", "--tags", "--always"], capture_output=True, text=True, check=False)
+            if res2.returncode == 0 and res2.stdout.strip():
+                meta["version"] = res2.stdout.strip()
+        except Exception:
+            pass
 
     if not meta["version"]:
-        meta["version"] = "v7.2"
+        meta["version"] = "v7.4"
 
     m_tag = re.search(r"(v[0-9]+\.[0-9]+)", meta["version"])
     meta["version_tag"] = m_tag.group(1) if m_tag else meta["version"]
@@ -263,6 +287,15 @@ def generate_history_matrix(history_dir: Path, current_run: dict) -> str:
         r_m = r.get("metrics", {})
         r_ver = r.get("version_tag") or r.get("version") or "v7.0"
         r_label = r.get("run_label") or r.get("version") or r.get("date", "N/A")
+        # Auto-correct stale v7.2 tag if commit message explicitly specifies a newer version (e.g. v7.3 or v7.4)
+        c_msg = r.get("commit_msg", "")
+        if c_msg and ("v7.2" in r_ver or r_ver == "v7.2"):
+            m_msg = re.search(r"\b(v[0-9]+\.[0-9]+)\b", c_msg)
+            if m_msg:
+                r_ver = m_msg.group(1)
+                r_commit_short = (r.get("commit_short") or (r.get("commit_sha", "")[:7] if r.get("commit_sha") else ""))
+                if r_commit_short:
+                    r_label = f"{r_ver}-{r_commit_short}"
         r_commit = (r.get("commit_short") or (r.get("commit_sha", "")[:7] if r.get("commit_sha") else "")) or "-"
         r_date = r.get("date", "N/A")
         r_wr = (r_m.get("winrate", 0.0) or 0.0) * 100

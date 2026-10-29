@@ -2,11 +2,11 @@
 
 | Thông Tin Phiên Chạy | Chi Tiết | Đánh Dấu / Định Danh |
 | :--- | :--- | :--- |
-| 🏷️ **Phiên bản Chiến lược (Version)** | **`v7.2-18-g2f4a0551f`** | `v7.2` |
-| 🔖 **Git Commit** | `2f4a055` | `feat(strategy): add new Short Tag 744 (Bearish Breaker Block S/R Flip) v7.4` |
-| 🚀 **Đánh dấu lần chạy (Run Marker)** | **`v7.2-2f4a055`** | `Workflow #local` |
+| 🏷️ **Phiên bản Chiến lược (Version)** | **`v7.4`** | `v7.4` |
+| 🔖 **Git Commit** | `1682276` | `fix(sizing): restrict Tag 744 to incubator tier stake allocation (v7.4)` |
+| 🚀 **Đánh dấu lần chạy (Run Marker)** | **`v7.4-1682276`** | `Workflow #local` |
 | 🤖 **Chiến lược (Strategy)** | `NostalgiaForInfinityX8_Combined_AI` | `Combined AI Engine` |
-| 📅 **Thời gian đánh giá (Evaluation Date)** | `2026-10-29 08:11:48 UTC` | `UTC` |
+| 📅 **Thời gian đánh giá (Evaluation Date)** | `2026-10-29 09:37:19 UTC` | `UTC` |
 | ⏱️ **Cửa sổ Backtest (Timerange)** | `20260502-20261029` | `178 ngày` |
 | 📁 **Tệp kết quả (Source File)** | `backtest-result-2026-10-29_15-11-18.zip` | `Binance Futures 5m` |
 
@@ -14,7 +14,7 @@
 
 ## ⚖️ So Sánh Hiệu Suất Với Lần Backtest Trước (Benchmark Comparison)
 
-| Chỉ số định lượng | Lần chạy này [v7.2-2f4a055 - 2f4a055] | Lần trước [v7.2-2f4a055 - 2f4a055] | Chênh lệch (Δ Delta) | Xu hướng |
+| Chỉ số định lượng | Lần chạy này [v7.4-1682276 - 1682276] | Lần trước [v7.4-2f4a055 - 2f4a055] | Chênh lệch (Δ Delta) | Xu hướng |
 | :--- | :--- | :--- | :--- | :--- |
 | **Tỷ lệ thắng (Winrate)** | **96.61%** | **96.19%** | `+0.42%` | 🟢 Cải thiện |
 | **Lợi nhuận ròng (Net Profit %)** | **+1160.20%** | **+975.82%** | `+184.38%` | 🟢 Cải thiện |
@@ -40,10 +40,10 @@
 | `v7.2-latest-180d-101pairs` | **`v7.2`** | `d003c7e` | 20261028 | **84.77%** | +1,847.60 USDT (+923.8%) | 6.57% | 14.53 | 2.97 | `440` | ⚪ Đã lưu |
 | `v7.2-a5dc0a8` | **`v7.2`** | `a5dc0a8` | 20261028 | **84.77%** | +1,837.45 USDT (+918.7%) | 6.58% | 14.52 | 2.97 | `440` | ⚪ Đã lưu |
 | `v7.2-a5dc0a8` | **`v7.2`** | `a5dc0a8` | 20261028 | **96.96%** | +2,329.34 USDT (+1164.7%) | 2.38% | 15.01 | 17.68 | `230` | ⚪ Đã lưu |
-| `v7.2-a995ec9` | **`v7.2`** | `a995ec9` | 20261029 | **96.96%** | +2,318.05 USDT (+1159.0%) | 2.38% | 15.11 | 17.63 | `230` | ⚪ Đã lưu |
-| `v7.2-a995ec9` | **`v7.2`** | `a995ec9` | 20261029 | **96.61%** | +2,330.07 USDT (+1165.0%) | 2.38% | 14.91 | 14.35 | `236` | ⚪ Đã lưu |
-| `v7.2-2f4a055` | **`v7.2`** | `2f4a055` | 20261029 | **96.19%** | +1,951.64 USDT (+975.8%) | 10.92% | 14.33 | 11.94 | `236` | ⚪ Đã lưu |
-| `v7.2-2f4a055` | **`v7.2`** | `2f4a055` | 20261029 | **96.61%** | +2,320.39 USDT (+1160.2%) | 2.38% | 15.12 | 16.04 | `236` | 🎯 **HIỆN TẠI** |
+| `v7.3-a995ec9` | **`v7.3`** | `a995ec9` | 20261029 | **96.96%** | +2,318.05 USDT (+1159.0%) | 2.38% | 15.11 | 17.63 | `230` | ⚪ Đã lưu |
+| `v7.3-a995ec9` | **`v7.3`** | `a995ec9` | 20261029 | **96.61%** | +2,330.07 USDT (+1165.0%) | 2.38% | 14.91 | 14.35 | `236` | ⚪ Đã lưu |
+| `v7.4-2f4a055` | **`v7.4`** | `2f4a055` | 20261029 | **96.19%** | +1,951.64 USDT (+975.8%) | 10.92% | 14.33 | 11.94 | `236` | ⚪ Đã lưu |
+| `v7.4-1682276` | **`v7.4`** | `1682276` | 20261029 | **96.61%** | +2,320.39 USDT (+1160.2%) | 2.38% | 15.12 | 16.04 | `236` | 🎯 **HIỆN TẠI** |
 
 ---
 

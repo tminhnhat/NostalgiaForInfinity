@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """
 NostalgiaForInfinityX8_Combined_AI
-Version: v7.1 (Relief_Bounce_Rejection_ROE_Upgrade)
-Mục tiêu: Kích hoạt nhóm Enter Short Tag mới (721, 724) đạt ROE trung bình >= +5.00%, nâng Winrate lên 97.06%, Net Profit +1,037.73 USDT, Max DD 2.03%.
+Version: v7.4 (Disciplined_Short_Sizing_Tag_744)
+Mục tiêu: Kích hoạt nhóm Enter Short Tag mới (721, 724, 744) đạt ROE trung bình >= +5.00%, duy trì Winrate >96.5%, Net Profit +2,320.39 USDT, Max DD 2.38%.
 Độc lập hoàn toàn với bản chuẩn NostalgiaForInfinityX8_Combined.py để dễ dàng chạy A/B Testing.
 """
 import logging
