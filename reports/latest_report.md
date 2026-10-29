@@ -3,10 +3,10 @@
 | Thông Tin Phiên Chạy | Chi Tiết | Đánh Dấu / Định Danh |
 | :--- | :--- | :--- |
 | 🏷️ **Phiên bản Chiến lược (Version)** | **`v7.4`** | `v7.4` |
-| 🔖 **Git Commit** | `1682276` | `fix(sizing): restrict Tag 744 to incubator tier stake allocation (v7.4)` |
-| 🚀 **Đánh dấu lần chạy (Run Marker)** | **`v7.4-1682276`** | `Workflow #local` |
+| 🔖 **Git Commit** | `5f68de4` | `fix(report): dynamically resolve strategy version from code and correct historical matrix (v7.4)` |
+| 🚀 **Đánh dấu lần chạy (Run Marker)** | **`v7.4-5f68de4`** | `Workflow #local` |
 | 🤖 **Chiến lược (Strategy)** | `NostalgiaForInfinityX8_Combined_AI` | `Combined AI Engine` |
-| 📅 **Thời gian đánh giá (Evaluation Date)** | `2026-10-29 09:37:19 UTC` | `UTC` |
+| 📅 **Thời gian đánh giá (Evaluation Date)** | `2026-10-29 09:38:56 UTC` | `UTC` |
 | ⏱️ **Cửa sổ Backtest (Timerange)** | `20260502-20261029` | `178 ngày` |
 | 📁 **Tệp kết quả (Source File)** | `backtest-result-2026-10-29_15-11-18.zip` | `Binance Futures 5m` |
 
@@ -14,7 +14,7 @@
 
 ## ⚖️ So Sánh Hiệu Suất Với Lần Backtest Trước (Benchmark Comparison)
 
-| Chỉ số định lượng | Lần chạy này [v7.4-1682276 - 1682276] | Lần trước [v7.4-2f4a055 - 2f4a055] | Chênh lệch (Δ Delta) | Xu hướng |
+| Chỉ số định lượng | Lần chạy này [v7.4-5f68de4 - 5f68de4] | Lần trước [v7.4-2f4a055 - 2f4a055] | Chênh lệch (Δ Delta) | Xu hướng |
 | :--- | :--- | :--- | :--- | :--- |
 | **Tỷ lệ thắng (Winrate)** | **96.61%** | **96.19%** | `+0.42%` | 🟢 Cải thiện |
 | **Lợi nhuận ròng (Net Profit %)** | **+1160.20%** | **+975.82%** | `+184.38%` | 🟢 Cải thiện |
@@ -43,7 +43,7 @@
 | `v7.3-a995ec9` | **`v7.3`** | `a995ec9` | 20261029 | **96.96%** | +2,318.05 USDT (+1159.0%) | 2.38% | 15.11 | 17.63 | `230` | ⚪ Đã lưu |
 | `v7.3-a995ec9` | **`v7.3`** | `a995ec9` | 20261029 | **96.61%** | +2,330.07 USDT (+1165.0%) | 2.38% | 14.91 | 14.35 | `236` | ⚪ Đã lưu |
 | `v7.4-2f4a055` | **`v7.4`** | `2f4a055` | 20261029 | **96.19%** | +1,951.64 USDT (+975.8%) | 10.92% | 14.33 | 11.94 | `236` | ⚪ Đã lưu |
-| `v7.4-1682276` | **`v7.4`** | `1682276` | 20261029 | **96.61%** | +2,320.39 USDT (+1160.2%) | 2.38% | 15.12 | 16.04 | `236` | 🎯 **HIỆN TẠI** |
+| `v7.4-5f68de4` | **`v7.4`** | `5f68de4` | 20261029 | **96.61%** | +2,320.39 USDT (+1160.2%) | 2.38% | 15.12 | 16.04 | `236` | 🎯 **HIỆN TẠI** |
 
 ---
 
