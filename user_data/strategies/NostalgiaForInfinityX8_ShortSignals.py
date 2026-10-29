@@ -74,6 +74,7 @@ class NostalgiaForInfinityX8_ShortSignals:
         self.enable_short_liquidity_sweep = True       # Tag 741 (Macro Liquidity Sweep Fakeout Rejection)
         self.enable_short_fvg_rejection = True         # Tag 742 (Fair Value Gap Imbalance Retest Failure)
         self.enable_short_mss_breakdown = True         # Tag 743 (Market Structure Shift & Momentum Flip)
+        self.enable_short_breaker_retest = True        # Tag 744 (Bearish Breaker Block S/R Flip Retest Failure)
 
         # =========================================================================
         # Exit Thresholds chuyên biệt cho Short
@@ -91,7 +92,7 @@ class NostalgiaForInfinityX8_ShortSignals:
             "711", "712", "713", "714",
             "721", "722", "723", "724", "725",
             "731",
-            "741", "742", "743",
+            "741", "742", "743", "744",
             "short_custom_breakdown",
             "short_custom_sfp",
             "short_custom_exhaustion",
@@ -662,6 +663,31 @@ class NostalgiaForInfinityX8_ShortSignals:
             & (~btc_bullish)
         )
 
+        # TAG 744: Bearish Breaker Block / S/R Flip Retest Failure
+        # Nhịp hồi kiểm tra lại đáy 24 nến (2h) bị gãy, biến thành cản kháng cự mới
+        shift_low_24 = np.roll(rolling_low_24, 1)
+        cond_744 = (
+            (volume > 0)
+            & (ema_50 < ema_200)                          # Downtrend tổng thể
+            & (~close_above_ema200_1h)                    # Dưới 1H EMA 200
+            & (close < ema_21)                            # Đóng cửa dưới EMA 21
+            & (high >= shift_low_24 * 0.998)              # Nhịp hồi rướn test lại đáy cũ 2h (vùng S/R Flip)
+            & (high <= shift_low_24 * 1.015)              # Giới hạn trần hồi (tránh bẫy pump mạnh vượt đỉnh)
+            & (close < shift_low_24)                      # Đóng cửa thất bại dưới vùng cản (xác nhận từ chối)
+            & (close < open_px)                           # BẮT BUỘC NẾN ĐỎ
+            & (upper_wick_ratio >= 0.35)                  # Râu trên dài thể hiện áp lực bán đè bẹp
+            & (vol_spike_ratio >= 1.25)                   # Volume xác nhận phe bán nhập cuộc
+            & (vol_spike_ratio <= 4.50)                   # Giới hạn trần volume chống selling climax
+            & (rsi_14 >= 30.0) & (rsi_14 <= 46.0)         # Vùng RSI động lượng xả breakdown chuẩn
+            & (~rsi_1h_oversold)                          # Không short khi 1h đã quá bán sâu < 30
+            & (~rsi_1h_overbought)                        # Chặn coin đang có 1h RSI quá mua / pump mạnh
+            & (~is_saturday)
+            & (~is_sunday)
+            & (~is_monday_morning)
+            & (~is_monday_us_open)
+            & (~btc_bullish)
+        )
+
         # Setup 1: Exhaustion Confluence - ĐÃ TẮT ĐỂ TRIỆT TIÊU 100% NHIỄU BẮT ĐỈNH TRONG SÓNG TĂNG
         trigger_exhaustion = np.zeros(n_rows, dtype=bool)
 
@@ -704,6 +730,9 @@ class NostalgiaForInfinityX8_ShortSignals:
         # Gãy cấu trúc vi mô xác nhận động lượng xả
         trigger_743 = cond_743 & cond_731 if self.enable_short_mss_breakdown else np.zeros(n_rows, dtype=bool)
 
+        # Setup 13: Bearish Breaker Block S/R Flip Retest Failure (Tag 744)
+        trigger_744 = cond_744 & (btc_dumping | cond_731) & (~close_above_ema200_1h) if self.enable_short_breaker_retest else np.zeros(n_rows, dtype=bool)
+
         # BỘ LỌC VĨ MÔ QUY TẮC VÀNG: BẮT BUỘC DOWNTREND KHUNG LỚN & KHÔNG BÁN ĐÁY QUÁ BÁN
         # Tuyệt đối cấm Short bất kỳ coin nào đang nằm trên EMA 200 hoặc khi RSI đã rơi vào vùng quá bán sâu (<32)
         macro_bearish_regime = (
@@ -727,6 +756,7 @@ class NostalgiaForInfinityX8_ShortSignals:
             | trigger_741
             | trigger_742
             | trigger_743
+            | trigger_744
             | trigger_exhaustion
         ) & macro_bearish_regime
 
@@ -752,6 +782,7 @@ class NostalgiaForInfinityX8_ShortSignals:
                 (cond_741, "741"),
                 (cond_742, "742"),
                 (cond_743, "743"),
+                (cond_744, "744"),
             ]
             for sig_mask, tag in all_signals:
                 active_idxs = np.intersect1d(idxs, np.where(sig_mask)[0])

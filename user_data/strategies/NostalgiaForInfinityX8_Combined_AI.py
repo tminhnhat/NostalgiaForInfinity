@@ -72,7 +72,7 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
 
     def version(self) -> str:
         base_ver = super().version()
-        return f"{base_ver} + AI_Gatekeeper_v7.3_Optimized_Short_Tag_741"
+        return f"{base_ver} + AI_Gatekeeper_v7.4_New_Short_Tag_744_Breaker"
 
     def __init__(self, config: dict) -> None:
         # Tạm thời ẩn các key custom khỏi nfi_parameters để Nostalgia gốc không log warning không cần thiết
@@ -114,6 +114,10 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
             ai_tags_to_register.append(f"703 741 731_AI_PASS")
             ai_tags_to_register.append(f"703 742 731_AI_PASS")
             ai_tags_to_register.append(f"703 743 731_AI_PASS")
+            ai_tags_to_register.append(f"744_AI_PASS")
+            ai_tags_to_register.append(f"744 731_AI_PASS")
+            ai_tags_to_register.append(f"703 744 731_AI_PASS")
+            ai_tags_to_register.append(f"702 703 744 731_AI_PASS")
 
         for atag in set(ai_tags_to_register):
             if atag not in self.short_normal_mode_tags:
@@ -787,7 +791,7 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
             # Cắt giảm rủi ro sớm khi vị thế Short âm vượt lên trên 1H EMA 50.
             # Đối với Tag 741 (bắt đỉnh SFP): Thoát ngay tại ngưỡng -12.5% ROE (tiết kiệm ~40% mức lỗ mỗi lệnh)
             # Đối với các tag Short khác: Thoát tại -17.5% ROE.
-            cut_threshold = -0.125 if "741" in orig_tag else -0.175
+            cut_threshold = -0.125 if ("741" in orig_tag or "744" in orig_tag) else -0.175
             if current_profit <= cut_threshold and hasattr(self, "dp") and self.dp is not None:
                 df_pair, _ = self.dp.get_analyzed_dataframe(pair, self.timeframe)
                 if len(df_pair) > 0:
@@ -1087,7 +1091,7 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
             etag = str(entry_tag or "")
 
             # Tầng 1: Elite High-WR Short Tags
-            tier1_elite_tags = ("706", "724", "721", "711", "702 703 731", "701 702 703 731", "701 703 706 731")
+            tier1_elite_tags = ("706", "724", "721", "711", "744", "702 703 731", "701 702 703 731", "701 703 706 731")
             is_tier1 = any(t in etag for t in tier1_elite_tags) and ("_AI_PASS" in etag or "AI_PASS" in etag)
 
             # Tầng 2: Standard AI Short Tags
