@@ -72,7 +72,7 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
 
     def version(self) -> str:
         base_ver = super().version()
-        return f"{base_ver} + AI_Gatekeeper_v7.4_New_Short_Tag_744_Breaker"
+        return f"{base_ver} + AI_Gatekeeper_v7.4_Disciplined_Short_Sizing"
 
     def __init__(self, config: dict) -> None:
         # Tạm thời ẩn các key custom khỏi nfi_parameters để Nostalgia gốc không log warning không cần thiết
@@ -1090,17 +1090,27 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
         if side in ("short", "sell"):
             etag = str(entry_tag or "")
 
-            # Tầng 1: Elite High-WR Short Tags
-            tier1_elite_tags = ("706", "724", "721", "711", "744", "702 703 731", "701 702 703 731", "701 703 706 731")
+            # Tầng 1: Elite High-WR Short Tags (Track-record xuất sắc v7.3)
+            tier1_elite_tags = ("706", "724", "721", "711", "702 703 731", "701 702 703 731", "701 703 706 731")
             is_tier1 = any(t in etag for t in tier1_elite_tags) and ("_AI_PASS" in etag or "AI_PASS" in etag)
 
             # Tầng 2: Standard AI Short Tags
             tier2_ai_tags = ("703 722 731", "701 703 731", "724 731")
             is_tier2 = any(t in etag for t in tier2_ai_tags) and ("_AI_PASS" in etag or "AI_PASS" in etag)
 
-            # Ưu tiên nhẹ cho Tier 1 Elite khi chưa có lệnh Short nào:
-            if is_tier1 and open_shorts_count == 0:
+            # Tầng 3: Incubator cho Tag 744 mới phát triển
+            # Cắt giảm 50% quy mô vốn vào lệnh (0.50x raw_proposed, trần 0.55x) để bảo vệ vốn tuyệt đối
+            is_744 = "744" in etag
+
+            if is_744:
+                base_stake = 0.50 * raw_proposed
+                target_stake = base_stake * vol_mult * ai_mult
+                max_allowed_stake = 0.55 * raw_proposed
+            elif is_tier1 and open_shorts_count == 0:
                 base_stake = 1.15 * raw_proposed
+                target_stake = base_stake * vol_mult * ai_mult
+            elif is_tier2:
+                base_stake = 1.00 * raw_proposed
                 target_stake = base_stake * vol_mult * ai_mult
 
             # Short Concurrent Double-Drawdown Guard:
@@ -1108,6 +1118,8 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
                 max_allowed_stake = 0.80 * raw_proposed
             elif open_shorts_count == 1:
                 max_allowed_stake = 1.00 * raw_proposed
+            elif is_744:
+                max_allowed_stake = 0.55 * raw_proposed
             elif is_tier1 and open_trades_count <= 6:
                 max_allowed_stake = 1.25 * raw_proposed
             elif is_tier2 and open_trades_count <= 6:
