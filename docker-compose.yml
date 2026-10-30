@@ -3,15 +3,22 @@
 x-common-settings:
   &common-settings
   image: freqtradeorg/freqtrade:stable
-  build:
-    context: .
-    dockerfile: "./docker/Dockerfile.custom"
+  # build:
+  #   context: .
+  #   dockerfile: "./docker/Dockerfile.custom"
   restart: unless-stopped
   volumes:
     - "./user_data:/freqtrade/user_data"
     - "./user_data/data:/freqtrade/user_data/data"
     - "./configs:/freqtrade/configs"
+    - "./NostalgiaForInfinityX8.py:/freqtrade/NostalgiaForInfinityX8.py"
+    - "./NostalgiaForInfinityX8_Combined.py:/freqtrade/NostalgiaForInfinityX8_Combined.py"
+    - "./NostalgiaForInfinityX8_ShortSignals.py:/freqtrade/NostalgiaForInfinityX8_ShortSignals.py"
     - "./${FREQTRADE__STRATEGY:-NostalgiaForInfinityX8}.py:/freqtrade/${FREQTRADE__STRATEGY:-NostalgiaForInfinityX8}.py"
+    - "./NostalgiaForInfinityX8.py:/freqtrade/user_data/strategies/NostalgiaForInfinityX8.py"
+    - "./NostalgiaForInfinityX8_Combined.py:/freqtrade/user_data/strategies/NostalgiaForInfinityX8_Combined.py"
+    - "./NostalgiaForInfinityX8_ShortSignals.py:/freqtrade/user_data/strategies/NostalgiaForInfinityX8_ShortSignals.py"
+    - "./${FREQTRADE__STRATEGY:-NostalgiaForInfinityX8}.py:/freqtrade/user_data/strategies/${FREQTRADE__STRATEGY:-NostalgiaForInfinityX8}.py"
   healthcheck:
     test: ["CMD", "curl", "-f", "http://localhost:${FREQTRADE__API_SERVER__LISTEN_PORT:-8080}"]
     interval: 1m30s
