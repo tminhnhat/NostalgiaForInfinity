@@ -39,22 +39,33 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.GH_PAT_TOKEN || secrets.GITHUB_TOKEN }}
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
       - name: Determine Version & Backtest Run Context
         id: meta
         run: |
-          GIT_TAG=$(git describe --tags --exact-match 2>/dev/null || git describe --tags --always 2>/dev/null || echo "v7.2")
+          EXACT_TAG=$(git describe --tags --exact-match 2>/dev/null || true)
           SHORT_SHA=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
           COMMIT_MSG=$(git log -1 --pretty=%s 2>/dev/null | tr -d '\n' || echo "daily backtest")
           RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          STRATEGY_NAME="${{ github.event.inputs.strategy || 'NostalgiaForInfinityX8_Combined_AI' }}"
 
           VERSION="${{ github.event.inputs.version }}"
           if [ -z "$VERSION" ]; then
-            VERSION="$GIT_TAG"
+            if [ -n "$EXACT_TAG" ]; then
+              VERSION="$EXACT_TAG"
+            else
+              VERSION=$(python -c "import sys; sys.path.insert(0, 'scripts'); from export_report import detect_strategy_version; print(detect_strategy_version('$STRATEGY_NAME') or 'v7.4')")
+            fi
           fi
 
           LABEL="${{ github.event.inputs.run_label }}"
           if [ -z "$LABEL" ]; then
-            LABEL="${VERSION}-run-${{ github.run_number }}"
+            LABEL="${VERSION}-${SHORT_SHA}-run-${{ github.run_number }}"
           fi
 
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
@@ -63,12 +74,6 @@ jobs:
           echo "run_url=${RUN_URL}" >> $GITHUB_OUTPUT
           echo "commit_msg=${COMMIT_MSG}" >> $GITHUB_OUTPUT
           echo "📋 Context resolved: Version=${VERSION}, Label=${LABEL}, SHA=${SHORT_SHA}"
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-          cache: 'pip'
 
       - name: Install TA-Lib C Library
         run: |

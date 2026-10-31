@@ -49,20 +49,25 @@ def main():
     end_date = now_utc.strftime("%Y%m%d")
     timerange = f"{start_date}-{end_date}"
 
-    if not args.version:
-        # Auto-detect strategy version
+    is_stale_git = bool(args.version and re.search(r"-[0-9]+-g[0-9a-f]+$", args.version))
+    if not args.version or is_stale_git:
+        # Auto-detect strategy version directly from strategy code
         for strat_file in [Path(f"{args.strategy}.py"), Path(f"user_data/strategies/{args.strategy}.py")]:
             if strat_file.exists():
                 try:
                     with open(strat_file, "r", encoding="utf-8") as f:
-                        c = f.read()
-                        m_gate = re.search(r"AI_Gatekeeper_(v[0-9]+(?:\.[0-9]+)*)", c)
+                        content_str = f.read()
+                        m_gate = re.search(r"AI_Gatekeeper_(v[0-9]+(?:\.[0-9]+)*)", content_str)
                         if m_gate:
                             args.version = m_gate.group(1).strip()
                             break
-                        m_doc = re.search(r"Version:\s*(v[0-9]+(?:\.[0-9]+)*[^\n\r\(\)]*)", c)
+                        m_doc = re.search(r"Version:\s*(v[0-9]+(?:\.[0-9]+)*[^\n\r\(\)]*)", content_str)
                         if m_doc:
                             args.version = m_doc.group(1).strip()
+                            break
+                        m_ver = re.search(r"def\s+version[^{:]*:[^\n]*\n\s*return\s*[\"']([^\"']+)[\"']", content_str)
+                        if m_ver:
+                            args.version = m_ver.group(1).strip()
                             break
                 except Exception:
                     pass

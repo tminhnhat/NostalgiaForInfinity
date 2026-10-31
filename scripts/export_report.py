@@ -151,6 +151,10 @@ def detect_strategy_version(strat_name: str) -> str | None:
                     m_doc = re.search(r"Version:\s*(v[0-9]+(?:\.[0-9]+)*[^\n\r\(\)]*)", content)
                     if m_doc:
                         return m_doc.group(1).strip()
+                    # Priority C: Check def version(self) -> str
+                    m_ver = re.search(r"def\s+version[^{:]*:[^\n]*\n\s*return\s*[\"']([^\"']+)[\"']", content)
+                    if m_ver:
+                        return m_ver.group(1).strip()
             except Exception:
                 pass
     return None
@@ -191,6 +195,10 @@ def resolve_run_metadata(args, strat_name: str) -> dict:
         pass
 
     # Resolve version:
+    # If version contains a stale git-describe suffix (e.g. v7.2-107-g59b3edde3), ignore it
+    if meta["version"] and re.search(r"-[0-9]+-g[0-9a-f]+$", meta["version"]):
+        meta["version"] = ""
+
     # 1. Exact git tag on HEAD commit (if developer tagged HEAD)
     if not meta["version"]:
         try:
@@ -224,7 +232,7 @@ def resolve_run_metadata(args, strat_name: str) -> dict:
     if not meta["version"]:
         meta["version"] = "v7.4"
 
-    m_tag = re.search(r"(v[0-9]+\.[0-9]+)", meta["version"])
+    m_tag = re.search(r"(v[0-9]+(?:\.[0-9]+)*)", meta["version"])
     meta["version_tag"] = m_tag.group(1) if m_tag else meta["version"]
 
     if not meta["run_label"]:
