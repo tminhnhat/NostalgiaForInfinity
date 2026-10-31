@@ -38,9 +38,9 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
 
     INTERFACE_VERSION = 3
 
-    # Cấu hình AI Gatekeeper
+# Cấu hình AI Gatekeeper
     ai_gatekeeper_enabled: bool = True
-    ai_confidence_threshold: float = 0.56
+    ai_confidence_threshold: float = 0.54
     ai_model_path: str = "user_data/models/nfix8_short_ai_v3.pkl"
     ai_fallback_model_path: str = "user_data/models/nfix8_short_ai_v2.pkl"
 
@@ -72,7 +72,7 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
 
     def version(self) -> str:
         base_ver = super().version()
-        return f"{base_ver} + AI_Gatekeeper_v7.4_Disciplined_Short_Sizing"
+        return f"{base_ver} + AI_Gatekeeper_v8.2_Elite_SMC_Peak"
 
     def __init__(self, config: dict) -> None:
         # Tạm thời ẩn các key custom khỏi nfi_parameters để Nostalgia gốc không log warning không cần thiết
@@ -392,6 +392,47 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
             df["ai_feat_btc_dist_ema200_4h"] = ((btc_c_4h - btc_e200_4h) / np.maximum(btc_e200_4h, 1e-8)).astype(np.float32)
         else:
             df["ai_feat_btc_dist_ema200_4h"] = 0.0
+
+        # 13. CÁC ĐẶC TRƯNG BỔ SUNG v5.0 (EXPANDED TECHNICAL UNIVERSE)
+        # Candle Range Normalized
+        df["ai_feat_candle_range_norm"] = (candle_range / np.maximum(close_p, 1e-8)).astype(np.float32)
+
+        # Dist EMA 9 & Ribbon Spreads
+        ema9_val = df["ema_9"].to_numpy(copy=False) if "ema_9" in df.columns else ta.EMA(close_p, timeperiod=9)
+        ema21_val = df["ema_21"].to_numpy(copy=False) if "ema_21" in df.columns else ta.EMA(close_p, timeperiod=21)
+        ema50_val = df["ema_50"].to_numpy(copy=False) if "ema_50" in df.columns else ta.EMA(close_p, timeperiod=50)
+        ema200_val = df["ema_200"].to_numpy(copy=False) if "ema_200" in df.columns else ta.EMA(close_p, timeperiod=200)
+
+        df["ai_feat_dist_ema9"] = ((close_p - ema9_val) / np.maximum(ema9_val, 1e-8)).astype(np.float32)
+        df["ai_feat_ribbon_spread_9_21"] = ((ema21_val - ema9_val) / np.maximum(close_p, 1e-8)).astype(np.float32)
+        df["ai_feat_ribbon_spread_50_200"] = ((ema200_val - ema50_val) / np.maximum(close_p, 1e-8)).astype(np.float32)
+
+        # Fast RSI 7 & StochRSI
+        df["ai_feat_rsi_7"] = ta.RSI(close_p, timeperiod=7).astype(np.float32)
+        fastk, fastd = ta.STOCHRSI(close_p, timeperiod=14, fastk_period=5, fastd_period=3)
+        df["ai_feat_stochrsi_k"] = np.nan_to_num(fastk, nan=50.0).astype(np.float32)
+        df["ai_feat_stochrsi_d"] = np.nan_to_num(fastd, nan=50.0).astype(np.float32)
+
+        # Bollinger Bands %B
+        if "bb_upperband2" in df.columns and "bb_lowerband2" in df.columns:
+            bb_diff = np.maximum(df["bb_upperband2"] - df["bb_lowerband2"], 1e-8)
+            df["ai_feat_bb_percent"] = ((close_p - df["bb_lowerband2"]) / bb_diff).astype(np.float32)
+        else:
+            df["ai_feat_bb_percent"] = np.full(len(df), 0.5, dtype=np.float32)
+
+        # Pair HTF 4h
+        e200_4h = df["EMA_200_4h"] if "EMA_200_4h" in df.columns else (df["ema_200_4h"] if "ema_200_4h" in df.columns else None)
+        df["ai_feat_pair_dist_ema200_4h"] = (((close_p - e200_4h.to_numpy(copy=False)) / np.maximum(e200_4h.to_numpy(copy=False), 1e-8)).astype(np.float32)) if e200_4h is not None else 0.0
+
+        rsi_4h = df["rsi_14_4h"] if "rsi_14_4h" in df.columns else (df["rsi_4h"] if "rsi_4h" in df.columns else None)
+        df["ai_feat_pair_rsi_4h"] = rsi_4h.to_numpy(copy=False).astype(np.float32) if rsi_4h is not None else np.full(len(df), 50.0, dtype=np.float32)
+
+        # BTC Macro 4h
+        btc_rsi_4h = df["btc_rsi_14_4h"] if "btc_rsi_14_4h" in df.columns else (df["btc_rsi_4h"] if "btc_rsi_4h" in df.columns else None)
+        df["ai_feat_btc_rsi_4h"] = btc_rsi_4h.to_numpy(copy=False).astype(np.float32) if btc_rsi_4h is not None else np.full(len(df), 50.0, dtype=np.float32)
+
+        btc_roc_4h = df["btc_ROC_9_4h"] if "btc_ROC_9_4h" in df.columns else (df["ROC_9_4h"] if "ROC_9_4h" in df.columns else None)
+        df["ai_feat_btc_roc_9_4h"] = btc_roc_4h.to_numpy(copy=False).astype(np.float32) if btc_roc_4h is not None else 0.0
 
         return df
 
@@ -807,7 +848,7 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
                             if current_rate > float(e200_1h):
                                 return f"exit_ai_early_macro_cut ( {orig_tag})"
 
-            # 1. AI Trailing Profit Lock:
+                                    # 1. AI Trailing Profit Lock:
             # Tầng 1: Đạt MFE >= +6.8% ROE (+1.36% spot 5x) nhưng tụt về <= +2.4% ROE:
             # Khóa lợi nhuận an toàn, bắt buộc current_profit >= +1.0% ROE để không bao giờ chốt ở giá âm!
             if mfe_lev >= 0.068 and current_profit <= 0.024 and current_profit >= 0.010:
@@ -838,9 +879,12 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
                             return f"exit_ai_reversal_harvest ( {orig_tag})"
 
             # 3. AI TIME-DECAY & DRIFT SOFT EXIT:
-            # Lệnh short giữ quá 36h mà không thể bứt phá (lợi nhuận <= +0.4% đòn bẩy):
-            # Thoát vị thế trôi dạt để giải phóng margin và bảo vệ tài khoản:
-            if trade_duration_hours >= 36.0 and current_profit <= 0.004:
+            # Thoát sớm các lệnh short trôi dạt sau 12h nếu vẫn đang âm <= -4.0% ROE (chặn ETH, SHIB, COIN):
+            if trade_duration_hours >= 12.0 and current_profit <= -0.040:
+                return f"exit_ai_drift_decay ( {orig_tag})"
+
+            # Lệnh short giữ quá 28h mà không thể bứt phá (lợi nhuận <= +0.2%):
+            if trade_duration_hours >= 28.0 and current_profit <= 0.002:
                 return f"exit_ai_drift_decay ( {orig_tag})"
 
         # =========================================================================
@@ -1071,9 +1115,11 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
                     val_prob = last_c.get("ai_short_prob", None)
                     if val_prob is not None and not np.isnan(val_prob) and val_prob > 0:
                         p = float(val_prob)
-                        if p >= 0.75:
+                        p_high = 0.75
+                        p_low = 0.60
+                        if p >= p_high:
                             ai_mult = 1.15
-                        elif p < 0.60:
+                        elif p < p_low:
                             ai_mult = 0.85
 
         target_stake = base_stake * vol_mult * ai_mult
@@ -1091,7 +1137,7 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
             etag = str(entry_tag or "")
 
             # Tầng 1: Elite High-WR Short Tags (Track-record xuất sắc v7.3)
-            tier1_elite_tags = ("706", "724", "721", "711", "702 703 731", "701 702 703 731", "701 703 706 731")
+            tier1_elite_tags = ("706", "724", "721", "711", "741", "742", "743", "702 703 731", "701 702 703 731", "701 703 706 731")
             is_tier1 = any(t in etag for t in tier1_elite_tags) and ("_AI_PASS" in etag or "AI_PASS" in etag)
 
             # Tầng 2: Standard AI Short Tags
@@ -1100,7 +1146,7 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
 
             # Tầng 3: Incubator cho Tag 744 mới phát triển
             # Cắt giảm 50% quy mô vốn vào lệnh (0.50x raw_proposed, trần 0.55x) để bảo vệ vốn tuyệt đối
-            is_744 = "744" in etag
+            is_744 = "744" in etag and not is_tier1
 
             if is_744:
                 base_stake = 0.50 * raw_proposed
