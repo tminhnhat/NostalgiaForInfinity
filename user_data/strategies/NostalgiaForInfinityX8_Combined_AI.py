@@ -630,6 +630,21 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
                     req_thresholds = np.full(len(df), self.ai_confidence_threshold, dtype=np.float32)
                     req_thresholds[cand_idxs_valid] = regime_th
 
+                    # ĐỀ XUẤT MỚI: Dynamic Volatility Thresholding cho các Tag dễ sụt giảm (Drag Tags)
+                    # ['703 721 724 731', '744']
+                    drag_tags = ("703 721 724 731", "744")
+                    c_tags_series = df["enter_tag_custom"].fillna("").astype(str)
+                    has_drag_tag = np.zeros(len(df), dtype=bool)
+                    for dt in drag_tags:
+                        has_drag_tag |= c_tags_series.str.contains(dt, regex=False).to_numpy()
+
+                    if np.any(has_drag_tag) and "ai_feat_atr_norm" in df.columns and "ai_feat_bb_bandwidth" in df.columns:
+                        is_high_vol = (df["ai_feat_atr_norm"] > 0.015) | (df["ai_feat_bb_bandwidth"] > 0.15)
+                        drag_high_vol = custom_mask & has_drag_tag & is_high_vol
+                        if np.any(drag_high_vol):
+                            # Tăng ngưỡng AI Confidence để lọc nhiễu trong giai đoạn biến động mạnh
+                            req_thresholds = np.where(drag_high_vol, np.maximum(req_thresholds, 0.70), req_thresholds)
+
                     approved_custom = custom_mask & (ai_probs >= req_thresholds)
                     vetoed_custom = custom_mask & (ai_probs < req_thresholds)
 
@@ -792,20 +807,27 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
             # Đối với Tag 741 (bắt đỉnh SFP): Thoát ngay tại ngưỡng -12.5% ROE (tiết kiệm ~40% mức lỗ mỗi lệnh)
             # Đối với các tag Short khác: Thoát tại -17.5% ROE.
             cut_threshold = -0.125 if ("741" in orig_tag or "744" in orig_tag) else -0.175
+
+            # Tighter stoploss factor (0.92x) during short-term high ATR expansions for specific tags
+            if "703 721 724 731" in orig_tag or "744" in orig_tag:
+                current_candle = kwargs.get('current_candle')
+                if current_candle is not None:
+                    atr_norm = current_candle.get("ai_feat_atr_norm", 0.0)
+                    if atr_norm and float(atr_norm) > 0.015:
+                        cut_threshold *= 0.92
+
             if current_profit <= cut_threshold and hasattr(self, "dp") and self.dp is not None:
-                df_pair, _ = self.dp.get_analyzed_dataframe(pair, self.timeframe)
-                if len(df_pair) > 0:
-                    current_rows = df_pair.loc[df_pair["date"] <= current_time]
-                    if len(current_rows) > 0:
-                        last_c = current_rows.iloc[-1]
-                        e50_1h = last_c.get("EMA_50_1h", None) or last_c.get("ema_50_1h", None)
-                        if e50_1h is not None and not np.isnan(float(e50_1h)) and float(e50_1h) > 0:
-                            if current_rate > float(e50_1h):
-                                return f"exit_ai_early_structural_cut ( {orig_tag})"
-                        e200_1h = last_c.get("EMA_200_1h", None) or last_c.get("ema_200_1h", None)
-                        if e200_1h is not None and not np.isnan(float(e200_1h)) and float(e200_1h) > 0:
-                            if current_rate > float(e200_1h):
-                                return f"exit_ai_early_macro_cut ( {orig_tag})"
+                current_candle = kwargs.get('current_candle')
+                if current_candle is not None:
+                    last_c = current_candle
+                    e50_1h = last_c.get("EMA_50_1h", None) or last_c.get("ema_50_1h", None)
+                    if e50_1h is not None and not np.isnan(float(e50_1h)) and float(e50_1h) > 0:
+                        if current_rate > float(e50_1h):
+                            return f"exit_ai_early_structural_cut ( {orig_tag})"
+                    e200_1h = last_c.get("EMA_200_1h", None) or last_c.get("ema_200_1h", None)
+                    if e200_1h is not None and not np.isnan(float(e200_1h)) and float(e200_1h) > 0:
+                        if current_rate > float(e200_1h):
+                            return f"exit_ai_early_macro_cut ( {orig_tag})"
 
             # 1. AI Trailing Profit Lock:
             # Tầng 1: Đạt MFE >= +6.8% ROE (+1.36% spot 5x) nhưng tụt về <= +2.4% ROE:
@@ -958,6 +980,16 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
         )
         if not base_confirm:
             return False
+
+        # Restrict simultaneous re-entries following stoploss within 4 hours for specific tags
+        if entry_tag and side in ("short", "sell") and ("703 721 724 731" in entry_tag or "744" in entry_tag):
+            closed_trades = Trade.get_trades_proxy(pair=pair, is_open=False)
+            for t in closed_trades:
+                # Match tag exactly or ensure it contains the specific tag
+                if t.enter_tag and ("703 721 724 731" in t.enter_tag or "744" in t.enter_tag) and t.close_profit < 0:
+                    if t.close_date_utc and (current_time - t.close_date_utc).total_seconds() < 4 * 3600:
+                        log.info(f"Blocked re-entry for {pair} on tag {entry_tag}: recent stoploss within 4h.")
+                        return False
 
         # Extreme Volatility & Panic Dump Circuit Breaker cho vị thế Long
         if side in ("long", "buy") and hasattr(self, "dp") and self.dp is not None:
