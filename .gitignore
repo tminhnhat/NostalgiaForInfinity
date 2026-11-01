@@ -167,3 +167,30 @@ artifacts/
 .env**
 scratch/
 *.zip
+
+
+# Temporary & deployment scripts with sensitive credentials
+deploy_temp*
+*deploy_temp*
+deploy_*.py
+!scripts/deploy_live.py
+*vps*.py
+scripts/*vps*.py
+scripts/temp_*
+temp_*
+*temp.py
+*temp.sh
+auto_deploy*
+execute_deploy*
+check_vps*
+
+# Secret & credential files
+*.pem
+*.key
+*.id_rsa
+*.id_ed25519
+pass*.txt
+account*.txt
+*credential*
+*secret*
+!configs/exampleconfig_secret.json
