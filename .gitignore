@@ -169,6 +169,14 @@ scratch/
 *.zip
 
 
+# Dedicated Temporary / Scratch Folders (everything inside is ignored except .gitkeep)
+temp/*
+!temp/.gitkeep
+scratch/*
+!scratch/.gitkeep
+tmp/*
+!tmp/.gitkeep
+
 # Temporary & deployment scripts with sensitive credentials
 deploy_temp*
 *deploy_temp*
