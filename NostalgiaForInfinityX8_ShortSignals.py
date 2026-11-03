@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 NostalgiaForInfinityX8_ShortSignals
-Version: v8.0
+Version: v8.4
 Modular Advanced Short Entry & Exit Strategy for Crypto Futures.
 
 THIS MODULE ADDS BRAND NEW, QUANTITATIVE SHORT STRATEGIES INDEPENDENT OF NOSTALGIA:
@@ -75,6 +75,7 @@ class NostalgiaForInfinityX8_ShortSignals:
         self.enable_short_fvg_rejection = True         # Tag 742 (Fair Value Gap Imbalance Retest Failure)
         self.enable_short_mss_breakdown = True         # Tag 743 (Market Structure Shift & Momentum Flip)
         self.enable_short_breaker_retest = True        # Tag 744 (Bearish Breaker Block S/R Flip Retest Failure)
+        self.enable_short_order_block = True           # Tag 745 (Bearish Order Block & Supply Cluster Rejection)
 
         # =========================================================================
         # Exit Thresholds chuyên biệt cho Short
@@ -92,7 +93,7 @@ class NostalgiaForInfinityX8_ShortSignals:
             "711", "712", "713", "714",
             "721", "722", "723", "724", "725",
             "731",
-            "741", "742", "743", "744",
+            "741", "742", "743", "744", "745",
             "short_custom_breakdown",
             "short_custom_sfp",
             "short_custom_exhaustion",
@@ -295,16 +296,19 @@ class NostalgiaForInfinityX8_ShortSignals:
             ema_200_1h = dataframe["ema_200_1h"].to_numpy(copy=False)
             close_above_ema200_1h = (close > ema_200_1h) & np.isfinite(ema_200_1h) & (ema_200_1h > 0)
 
-        # Khoảng cách tương đối tới 1H EMA 50
+        # Khoảng cách tương đối tới 1H EMA 50 & cờ lọc xu hướng 1H EMA 50
         dist_ema50_1h = np.zeros(n_rows, dtype=float)
+        close_above_ema50_1h = np.zeros(n_rows, dtype=bool)
         if "EMA_50_1h" in dataframe.columns:
             ema_50_1h = dataframe["EMA_50_1h"].to_numpy(copy=False)
             valid_50 = np.isfinite(ema_50_1h) & (ema_50_1h > 0)
             dist_ema50_1h = np.where(valid_50, (close - ema_50_1h) / np.where(valid_50, ema_50_1h, 1.0), 0.0)
+            close_above_ema50_1h = (close > ema_50_1h) & valid_50
         elif "ema_50_1h" in dataframe.columns:
             ema_50_1h = dataframe["ema_50_1h"].to_numpy(copy=False)
             valid_50 = np.isfinite(ema_50_1h) & (ema_50_1h > 0)
             dist_ema50_1h = np.where(valid_50, (close - ema_50_1h) / np.where(valid_50, ema_50_1h, 1.0), 0.0)
+            close_above_ema50_1h = (close > ema_50_1h) & valid_50
 
         # Trạng thái siêu sóng tăng đa khung thời gian
         macro_bull_ribbon = (ema_9 > ema_21) & (ema_21 > ema_50) & (ema_50 > ema_200) & (close > ema_200)
@@ -682,6 +686,33 @@ class NostalgiaForInfinityX8_ShortSignals:
             & (~btc_bullish)
         )
 
+        # TAG 745: Bearish Order Block Retest & Dynamic Supply Cluster Rejection
+        # Giá rướn test đỉnh swing 12 nến hoặc EMA 21 trong downtrend bị từ chối mạnh
+        shift_high_12 = np.roll(rolling_high_12, 1)
+        cond_745 = (
+            (volume > 0)
+            & (ema_21 < ema_50)                           # Dải Ribbon chuẩn: EMA 21 < EMA 50
+            & (ema_50 < ema_200)                          # 5m Downtrend
+            & (~close_above_ema200_1h)                    # Dưới 1H EMA 200
+            & (~close_above_ema50_1h)                     # Dưới 1H EMA 50
+            & (high >= np.maximum(shift_high_12 * 0.998, ema_21 * 0.998))  # Rướn test đỉnh 12 nến hoặc EMA 21
+            & (high <= shift_high_12 * 1.012)             # Giới hạn trần hồi, tránh bẫy breakout mạnh
+            & (close < ema_21)                            # Đóng cửa thất bại dưới EMA 21
+            & (close < open_px)                           # Bắt buộc nến đỏ
+            & (upper_wick_ratio >= 0.35)                  # Râu trên dài thể hiện áp lực từ chối mạnh
+            & (lower_wick_ratio <= 0.22)                  # Râu dưới ngắn (chưa có lực đỡ đáy)
+            & (body_ratio >= 0.25)                        # Thân nến giảm dứt khoát
+            & (vol_spike_ratio >= 1.25)                   # Volume xả nhập cuộc
+            & (vol_spike_ratio <= 4.50)                   # Tránh selling climax quá đà
+            & (macdhist < shift_macdhist)                 # Động lượng xả gia tốc
+            & (rsi_14 >= 38.0) & (rsi_14 <= 50.0)         # Vùng RSI vàng của sóng giảm tiếp diễn (>= 38.0)
+            & (~rsi_1h_oversold)                          # Không short khi 1H RSI < 30
+            & (~rsi_1h_overbought)                        # Không short khi 1H RSI đang quá mua / pump
+            & (~weekend_thin_liq)                         # Lọc thanh khoản mỏng cuối tuần
+            & (~monday_open_trap)                         # Lọc bẫy mở nến thứ Hai
+            & (~btc_bullish)                              # Chặn khi BTC đang trong sóng tăng mạnh
+        )
+
         # Setup 1: Exhaustion Confluence - ĐÃ TẮT ĐỂ TRIỆT TIÊU 100% NHIỄU BẮT ĐỈNH TRONG SÓNG TĂNG
         trigger_exhaustion = np.zeros(n_rows, dtype=bool)
 
@@ -724,6 +755,15 @@ class NostalgiaForInfinityX8_ShortSignals:
         # Setup 13: Bearish Breaker Block S/R Flip Retest Failure (Tag 744)
         trigger_744 = cond_744 & (btc_dumping | cond_731) & (~close_above_ema200_1h) if self.enable_short_breaker_retest else np.zeros(n_rows, dtype=bool)
 
+        # Setup 14: Bearish Order Block Supply Rejection (Tag 745)
+        # Bắt buộc đồng pha xả của BTC (loại bỏ false breakout khi BTC không đồng thuận)
+        trigger_745 = (
+            cond_745
+            & (btc_dumping | cond_731)
+            & (~close_above_ema200_1h)
+            & (~close_above_ema50_1h)
+        ) if self.enable_short_order_block else np.zeros(n_rows, dtype=bool)
+
         # BỘ LỌC VĨ MÔ QUY TẮC VÀNG (v8.0): BẮT BUỘC DOWNTREND KHUNG LỚN & KHÔNG BÁN ĐÁY QUÁ BÁN & THANH KHOẢN AN TOÀN
         macro_bearish_regime = (
             (close < ema_200)
@@ -748,6 +788,7 @@ class NostalgiaForInfinityX8_ShortSignals:
             | trigger_742
             | trigger_743
             | trigger_744
+            | trigger_745
             | trigger_exhaustion
         ) & macro_bearish_regime
 
@@ -774,6 +815,7 @@ class NostalgiaForInfinityX8_ShortSignals:
                 (cond_742, "742"),
                 (cond_743, "743"),
                 (cond_744, "744"),
+                (cond_745, "745"),
             ]
             for sig_mask, tag in all_signals:
                 active_idxs = np.intersect1d(idxs, np.where(sig_mask)[0])

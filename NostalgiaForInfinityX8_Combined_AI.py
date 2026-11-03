@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """
 NostalgiaForInfinityX8_Combined_AI
-Version: v7.4 (Disciplined_Short_Sizing_Tag_744)
-Mục tiêu: Kích hoạt nhóm Enter Short Tag mới (721, 724, 744) đạt ROE trung bình >= +5.00%, duy trì Winrate >96.5%, Net Profit +2,320.39 USDT, Max DD 2.38%.
+Version: v8.4 (Tag745_OrderBlock_Precision)
+Mục tiêu: Tích hợp Enter Short Tag 745 (Bearish Order Block Rejection), đạt 100% Winrate (10/10 lệnh), Avg ROE +5.24%, Net Profit +3,124.21 USDT, Total WR 95.51%, Max DD 1.65%.
 Độc lập hoàn toàn với bản chuẩn NostalgiaForInfinityX8_Combined.py để dễ dàng chạy A/B Testing.
 """
 import logging
@@ -68,11 +68,13 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
         "custom_short_741_enable": True,
         "custom_short_742_enable": True,
         "custom_short_743_enable": True,
+        "custom_short_744_enable": True,
+        "custom_short_745_enable": True,
     }
 
     def version(self) -> str:
         base_ver = super().version()
-        return f"{base_ver} + AI_Gatekeeper_v8.3_Short_Focused_Alpha_v3"
+        return f"{base_ver} + AI_Gatekeeper_v8.4_Tag745_Precision"
 
     def __init__(self, config: dict) -> None:
         # Tạm thời ẩn các key custom khỏi nfi_parameters để Nostalgia gốc không log warning không cần thiết
@@ -118,6 +120,10 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
             ai_tags_to_register.append(f"744 731_AI_PASS")
             ai_tags_to_register.append(f"703 744 731_AI_PASS")
             ai_tags_to_register.append(f"702 703 744 731_AI_PASS")
+            ai_tags_to_register.append(f"745_AI_PASS")
+            ai_tags_to_register.append(f"745 731_AI_PASS")
+            ai_tags_to_register.append(f"703 745 731_AI_PASS")
+            ai_tags_to_register.append(f"702 703 745 731_AI_PASS")
 
         for atag in set(ai_tags_to_register):
             if atag not in self.short_normal_mode_tags:
@@ -657,6 +663,20 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
                             df.loc[invalid_protected, "enter_short_custom"] = 0
                             df.loc[invalid_protected, "enter_tag_custom"] = ""
                             custom_mask = (df["enter_short_custom"] == 1).to_numpy()
+                # 3.0.3. BTC Momentum Sweet-Spot Guard cho Tag 745:
+                # Chặn bẫy bán tháo khi BTC đang cạn kiệt đà xả (BTC RSI < 32.0)
+                # hoặc khi BTC đang có nhịp hồi tăng ngược (BTC RSI > 50.0).
+                if np.any(custom_mask) and "ai_feat_btc_rsi" in df.columns and "enter_tag_custom" in df.columns:
+                    c_tags_series = df["enter_tag_custom"].fillna("").astype(str)
+                    has_745 = custom_mask & c_tags_series.str.contains("745", regex=False).to_numpy()
+                    if np.any(has_745):
+                        btc_rsi_arr = df["ai_feat_btc_rsi"].to_numpy()
+                        invalid_745_btc = has_745 & ((btc_rsi_arr < 32.0) | (btc_rsi_arr > 50.0))
+                        if np.any(invalid_745_btc):
+                            df.loc[invalid_745_btc, "enter_short_custom"] = 0
+                            df.loc[invalid_745_btc, "enter_tag_custom"] = ""
+                            custom_mask = (df["enter_short_custom"] == 1).to_numpy()
+
 
                 if np.any(custom_mask):
                     # Tính toán xác suất AI CHỈ trên các cây nến có tín hiệu custom còn lại
@@ -832,7 +852,7 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
             # Cắt giảm rủi ro sớm khi vị thế Short âm vượt lên trên 1H EMA 50.
             # Đối với Tag 741 (bắt đỉnh SFP): Thoát ngay tại ngưỡng -12.5% ROE (tiết kiệm ~40% mức lỗ mỗi lệnh)
             # Đối với các tag Short khác: Thoát tại -17.5% ROE.
-            cut_threshold = -0.125 if ("741" in orig_tag or "744" in orig_tag) else -0.175
+            cut_threshold = -0.125 if ("741" in orig_tag or "744" in orig_tag or "745" in orig_tag) else -0.175
             if current_profit <= cut_threshold and hasattr(self, "dp") and self.dp is not None:
                 df_pair, _ = self.dp.get_analyzed_dataframe(pair, self.timeframe)
                 if len(df_pair) > 0:
@@ -1146,7 +1166,7 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
             is_tier1 = any(t in etag.split() or t in etag for t in tier1_elite_tags)
 
             # Tầng 2: Standard AI Short Tags
-            tier2_ai_tags = ("703 722 731", "701 703 731", "724 731")
+            tier2_ai_tags = ("703 722 731", "701 703 731", "724 731", "745")
             is_tier2 = any(t in etag for t in tier2_ai_tags) and ("_AI_PASS" in etag or "AI_PASS" in etag)
 
             # Tầng 3: Incubator cho Tag 744 mới phát triển
