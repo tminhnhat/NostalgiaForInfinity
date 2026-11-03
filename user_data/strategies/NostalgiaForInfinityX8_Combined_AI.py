@@ -72,7 +72,7 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
 
     def version(self) -> str:
         base_ver = super().version()
-        return f"{base_ver} + AI_Gatekeeper_v8.2_Elite_SMC_Peak"
+        return f"{base_ver} + AI_Gatekeeper_v8.3_Short_Focused_Alpha_v3"
 
     def __init__(self, config: dict) -> None:
         # Tạm thời ẩn các key custom khỏi nfi_parameters để Nostalgia gốc không log warning không cần thiết
@@ -587,7 +587,7 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
             short_mask = (df["enter_short"] == 1).to_numpy()
             if np.any(short_mask):
                 tags_raw = df["enter_tag"].fillna("").astype(str).to_numpy()
-                is_562 = np.array([("562" in t.split()) for t in tags_raw]) & short_mask
+                is_562 = np.array([("562" in t.split() or "542" in t.split()) for t in tags_raw]) & short_mask
                 if np.any(is_562) and "ai_feat_pair_dist_ema50_1h" in df.columns and "ai_feat_btc_dist_ema200_4h" in df.columns:
                     dist_e50_1h = df["ai_feat_pair_dist_ema50_1h"].to_numpy()
                     btc_d4 = df["ai_feat_btc_dist_ema200_4h"].to_numpy()
@@ -859,13 +859,11 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
             if mfe_lev >= 0.110 and current_profit <= 0.045 and current_profit >= 0.025:
                 return f"exit_ai_profit_lock ( {orig_tag})"
 
-            # 2. AI Dynamic Reversal Harvest:
-            # Chốt lời chủ động khi nến đóng ở mức lãi mục tiêu cao (current_profit >= +4.8% ROE, tức +0.96% spot 5x)
-            # đi kèm râu dưới phản ứng (l_wick >= 15% hoặc RSI > 27) HOẶC đạt mốc siêu lợi nhuận >= +7.0% ROE:
+            # 2. AI Dynamic Reversal Harvest (Uncapped Runner Engine):
+            # Chốt lời chủ động CHỈ khi có nến phản đảo chiều thực sự:
+            # Rút chân râu dưới mạnh (l_wick >= 30%) kết hợp RSI bật tăng (RSI > 35) khi đang có lãi (current_profit >= +4.8% ROE).
+            # Gỡ bỏ trần +7.0% để cho phép các lệnh Short chạy hết biên độ xu hướng giảm với Adaptive Trailing.
             if current_profit >= 0.048 and hasattr(self, "dp") and self.dp is not None:
-                if current_profit >= 0.070:
-                    return f"exit_ai_reversal_harvest ( {orig_tag})"
-
                 df_pair, _ = self.dp.get_analyzed_dataframe(pair, self.timeframe)
                 if len(df_pair) > 0:
                     current_rows = df_pair.loc[df_pair["date"] <= current_time]
@@ -873,9 +871,7 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
                         last_c = current_rows.iloc[-1]
                         l_wick = last_c.get("ai_feat_lower_wick", 0.0)
                         rsi = last_c.get("rsi_14", 50.0)
-                        c_px = last_c.get("close", 0.0)
-                        o_px = last_c.get("open", 0.0)
-                        if (l_wick >= 0.15 and rsi > 27.0) or (c_px > o_px and rsi > 28.0):
+                        if l_wick >= 0.30 and rsi > 35.0:
                             return f"exit_ai_reversal_harvest ( {orig_tag})"
 
             # 3. AI TIME-DECAY & DRIFT SOFT EXIT:
@@ -1122,7 +1118,16 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
                         elif p < p_low:
                             ai_mult = 0.85
 
-        target_stake = base_stake * vol_mult * ai_mult
+        macro_long_mult = 1.0
+        if side in ("long", "buy") and hasattr(self, "dp") and self.dp is not None:
+            if len(df_pair) > 0 and len(current_rows) > 0:
+                val_btc_d4 = last_c.get("ai_feat_btc_dist_ema200_4h", None)
+                val_btc_rsi = last_c.get("ai_feat_btc_rsi_1h", None)
+                if val_btc_d4 is not None and val_btc_rsi is not None:
+                    if float(val_btc_d4) >= -0.010 and float(val_btc_rsi) >= 48.0 and open_trades_count <= 5:
+                        macro_long_mult = 1.15
+
+        target_stake = base_stake * vol_mult * ai_mult * macro_long_mult
 
         # 4. Dynamic Margin Buffer & Disciplined Sizing Belts (Khống chế chặt chẽ quanh raw_proposed):
         open_trades_list = Trade.get_open_trades() if Trade else []
@@ -1136,9 +1141,9 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
         if side in ("short", "sell"):
             etag = str(entry_tag or "")
 
-            # Tầng 1: Elite High-WR Short Tags (Track-record xuất sắc v7.3)
-            tier1_elite_tags = ("706", "724", "721", "711", "741", "742", "743", "702 703 731", "701 702 703 731", "701 703 706 731")
-            is_tier1 = any(t in etag for t in tier1_elite_tags) and ("_AI_PASS" in etag or "AI_PASS" in etag)
+            # Tầng 1: Elite High-WR Short Tags (Track-record xuất sắc v7.3 & v8.2: 562, 542, 706, 724, 721, 741-743, tổ hợp 702 703 731)
+            tier1_elite_tags = ("562", "542", "706", "724", "721", "711", "741", "742", "743", "702 703 731", "701 702 703 731", "701 703 706 731", "743 744", "702 703 705 731")
+            is_tier1 = any(t in etag.split() or t in etag for t in tier1_elite_tags)
 
             # Tầng 2: Standard AI Short Tags
             tier2_ai_tags = ("703 722 731", "701 703 731", "724 731")
@@ -1152,7 +1157,7 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
                 base_stake = 0.50 * raw_proposed
                 target_stake = base_stake * vol_mult * ai_mult
                 max_allowed_stake = 0.55 * raw_proposed
-            elif is_tier1 and open_shorts_count == 0:
+            elif is_tier1 and open_shorts_count <= 1:
                 base_stake = 1.15 * raw_proposed
                 target_stake = base_stake * vol_mult * ai_mult
             elif is_tier2:

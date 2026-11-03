@@ -202,3 +202,5 @@ account*.txt
 *credential*
 *secret*
 !configs/exampleconfig_secret.json
+
+user_data/nfix8-*.json

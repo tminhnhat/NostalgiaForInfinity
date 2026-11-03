@@ -24,6 +24,7 @@ def main():
     parser = argparse.ArgumentParser(description="Run evaluation backtest")
     parser.add_argument("--strategy", type=str, default="NostalgiaForInfinityX8_Combined_AI")
     parser.add_argument("--days", type=int, default=None)
+    parser.add_argument("--timerange", type=str, default=None, help="Timerange string (e.g. 20260504-20261031)")
     parser.add_argument("--config", type=Path, default=Path("configs/backtest_config.json"))
     parser.add_argument("--pairlist", type=Path, default=None)
     parser.add_argument("--version", type=str, default=None, help="Strategy version tag")
@@ -44,10 +45,13 @@ def main():
         except Exception:
             days = 180
 
-    now_utc = datetime.now(timezone.utc)
-    start_date = (now_utc - timedelta(days=days)).strftime("%Y%m%d")
-    end_date = now_utc.strftime("%Y%m%d")
-    timerange = f"{start_date}-{end_date}"
+    if args.timerange:
+        timerange = args.timerange
+    else:
+        now_utc = datetime.now(timezone.utc)
+        start_date = (now_utc - timedelta(days=days)).strftime("%Y%m%d")
+        end_date = now_utc.strftime("%Y%m%d")
+        timerange = f"{start_date}-{end_date}"
 
     is_stale_git = bool(args.version and re.search(r"-[0-9]+-g[0-9a-f]+$", args.version))
     if not args.version or is_stale_git:
