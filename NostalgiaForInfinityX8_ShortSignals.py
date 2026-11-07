@@ -76,6 +76,7 @@ class NostalgiaForInfinityX8_ShortSignals:
         self.enable_short_mss_breakdown = True         # Tag 743 (Market Structure Shift & Momentum Flip)
         self.enable_short_breaker_retest = True        # Tag 744 (Bearish Breaker Block S/R Flip Retest Failure)
         self.enable_short_order_block = True           # Tag 745 (Bearish Order Block & Supply Cluster Rejection)
+        self.enable_short_pnd_exhaustion = True        # Tag 746 (PND Exhaustion Waterfall Short)
 
         # =========================================================================
         # Exit Thresholds chuyên biệt cho Short
@@ -93,7 +94,7 @@ class NostalgiaForInfinityX8_ShortSignals:
             "711", "712", "713", "714",
             "721", "722", "723", "724", "725",
             "731",
-            "741", "742", "743", "744", "745",
+            "741", "742", "743", "744", "745", "746",
             "short_custom_breakdown",
             "short_custom_sfp",
             "short_custom_exhaustion",
@@ -713,6 +714,24 @@ class NostalgiaForInfinityX8_ShortSignals:
             & (~btc_bullish)                              # Chặn khi BTC đang trong sóng tăng mạnh
         )
 
+        # TAG 746: PND Exhaustion Waterfall Short (Bắt nhịp xả thác đổ của coin Bơm Xả)
+        pnd_regime = dataframe["is_pump_dump_regime"].to_numpy(copy=False) if "is_pump_dump_regime" in dataframe.columns else np.zeros(n_rows, dtype=bool)
+        sell_vol_r3 = dataframe["ai_feat_sell_vol_ratio_3"].to_numpy(copy=False) if "ai_feat_sell_vol_ratio_3" in dataframe.columns else np.full(n_rows, 0.6, dtype=np.float32)
+
+        cond_746 = (
+            (volume > 0)
+            & pnd_regime                                  # Coin đang trong chu kỳ Bơm Xả thác đổ (P&D Regime)
+            & (close < open_px)                           # Nến 5m đỏ
+            & (close < ema_9)                             # Đóng gãy dưới EMA 9
+            & (upper_wick_ratio >= 0.20)                  # Râu trên dài từ chối tăng
+            & (lower_wick_ratio <= 0.25)                  # Râu dưới ngắn, chưa có lực đỡ
+            & (rsi_14 <= 62.0) & (rsi_14 >= 30.0)         # RSI thoát quá mua, đang đà rơi
+            & (macdhist < shift_macdhist)                 # Động lượng bán gia tốc
+            & (sell_vol_r3 >= 0.52)                       # Volume bán áp đảo
+            & (~btc_bullish)                              # BTC không trong sóng bơm nóng
+            & (~weekend_thin_liq)                         # Không vào thanh khoản mỏng cuối tuần
+        )
+
         # Setup 1: Exhaustion Confluence - ĐÃ TẮT ĐỂ TRIỆT TIÊU 100% NHIỄU BẮT ĐỈNH TRONG SÓNG TĂNG
         trigger_exhaustion = np.zeros(n_rows, dtype=bool)
 
@@ -764,6 +783,15 @@ class NostalgiaForInfinityX8_ShortSignals:
             & (~close_above_ema50_1h)
         ) if self.enable_short_order_block else np.zeros(n_rows, dtype=bool)
 
+        # Setup 15: PND Exhaustion Waterfall Short (Tag 746)
+        # Bắt trọn nhịp xả thác đổ của coin Bơm Xả sau khi tạo đỉnh parabolic kiệt sức
+        trigger_746 = (
+            cond_746
+            & (~btc_bullish)
+            & (~weekend_thin_liq)
+            & is_liquid_for_short
+        ) if getattr(self, "enable_short_pnd_exhaustion", True) else np.zeros(n_rows, dtype=bool)
+
         # BỘ LỌC VĨ MÔ QUY TẮC VÀNG (v8.0): BẮT BUỘC DOWNTREND KHUNG LỚN & KHÔNG BÁN ĐÁY QUÁ BÁN & THANH KHOẢN AN TOÀN
         macro_bearish_regime = (
             (close < ema_200)
@@ -789,6 +817,7 @@ class NostalgiaForInfinityX8_ShortSignals:
             | trigger_743
             | trigger_744
             | trigger_745
+            | trigger_746
             | trigger_exhaustion
         ) & macro_bearish_regime
 
@@ -816,6 +845,7 @@ class NostalgiaForInfinityX8_ShortSignals:
                 (cond_743, "743"),
                 (cond_744, "744"),
                 (cond_745, "745"),
+                (cond_746, "746"),
             ]
             for sig_mask, tag in all_signals:
                 active_idxs = np.intersect1d(idxs, np.where(sig_mask)[0])

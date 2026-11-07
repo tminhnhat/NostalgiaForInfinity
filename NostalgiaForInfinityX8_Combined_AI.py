@@ -45,8 +45,8 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
     ai_fallback_model_path: str = "user_data/models/nfix8_short_ai_v2.pkl"
 
     # Danh sách các tag custom Short bị loại bỏ:
-    # Ở v7.1, loại bỏ các tag có kỳ vọng âm hoặc nhiễu cao (701 702 703 731, 703 706 731)
-    disabled_custom_short_tags: set = {"701 702 703 731", "703 706 731"}
+    # Ở v7.1 & v9.0, loại bỏ các tag có kỳ vọng âm hoặc nhiễu cao (701 702 703 731, 703 706 731, 703 721 731, 746)
+    disabled_custom_short_tags: set = {"701 702 703 731", "703 706 731", "703 721 731", "746"}
 
     # Toggles cho từng điều kiện Short custom (tương tự short_entry_signal_params của Nostalgia gốc)
     custom_short_signal_params: dict = {
@@ -70,11 +70,12 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
         "custom_short_743_enable": True,
         "custom_short_744_enable": True,
         "custom_short_745_enable": True,
+        "custom_short_746_enable": False,
     }
 
     def version(self) -> str:
         base_ver = super().version()
-        return f"{base_ver} + AI_Gatekeeper_v8.5_Asymmetric_PND_Guard"
+        return f"{base_ver} + AI_Gatekeeper_v9.0_Alpha_Maximus"
 
     def __init__(self, config: dict) -> None:
         # Tạm thời ẩn các key custom khỏi nfi_parameters để Nostalgia gốc không log warning không cần thiết
@@ -124,6 +125,10 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
             ai_tags_to_register.append(f"745 731_AI_PASS")
             ai_tags_to_register.append(f"703 745 731_AI_PASS")
             ai_tags_to_register.append(f"702 703 745 731_AI_PASS")
+            ai_tags_to_register.append(f"746_AI_PASS")
+            ai_tags_to_register.append(f"746 731_AI_PASS")
+            ai_tags_to_register.append(f"703 746 731_AI_PASS")
+            ai_tags_to_register.append(f"702 703 746 731_AI_PASS")
 
         for atag in set(ai_tags_to_register):
             if atag not in self.short_normal_mode_tags:
@@ -207,6 +212,9 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
             "custom_short_741_enable": "enable_short_liquidity_sweep",
             "custom_short_742_enable": "enable_short_fvg_rejection",
             "custom_short_743_enable": "enable_short_mss_breakdown",
+            "custom_short_744_enable": "enable_short_breaker_retest",
+            "custom_short_745_enable": "enable_short_order_block",
+            "custom_short_746_enable": "enable_short_pnd_exhaustion",
         }
         # Đồng bộ sang short_strategy (NostalgiaForInfinityX8_ShortSignals) nếu đã được khởi tạo
         if hasattr(self, "short_strategy") and self.short_strategy is not None:
@@ -614,28 +622,6 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
         # 1. Chạy tín hiệu Nostalgia gốc (Tất cả Long & Short gốc như 562)
         df = NostalgiaForInfinityX8.populate_entry_trend(self, df, metadata)
 
-        # 1.0. ASYMMETRIC PUMP & DUMP DIRECTIONAL GATING (VERSION 8.5):
-        # Nếu token đang nằm trong chu kỳ Bơm Xả (P&D Regime):
-        # - TRIỆT TIÊU 100% TÍN HIỆU LONG (enter_long = 0, xóa enter_tag của Long).
-        #   Ngăn chặn triệt để thảm họa bắt dao rơi trên coin rác / coin xả không hồi.
-        # - GIỮ NGUYÊN HOÀN TOÀN TÍN HIỆU SHORT (để Short bắt trọn đà rơi tự do).
-        if "is_pump_dump_regime" in df.columns:
-            pnd_mask = (df["is_pump_dump_regime"] == True).to_numpy()
-            if np.any(pnd_mask) and "enter_long" in df.columns:
-                long_pnd = pnd_mask & (df["enter_long"] == 1).to_numpy()
-                if np.any(long_pnd):
-                    df.loc[long_pnd, "enter_long"] = 0
-                    df.loc[long_pnd, "enter_tag"] = ""
-                    pair = metadata.get("pair", "UNKNOWN")
-                    dates = df.loc[long_pnd, "date"].to_numpy()
-                    for d in dates:
-                        self.veto_audit_records.append({
-                            "date": str(d),
-                            "pair": pair,
-                            "tag": "LONG_PND_VETO",
-                            "status": "VETOED_LONG_ON_PUMP_DUMP"
-                        })
-
         # 1.1. AI Gatekeeper VETO cho tín hiệu Short Tag 562 gốc (Chống bẫy Late Breakdown Squeeze)
         # Khi coin đã rơi quá sâu (dist_e50_1h <= -4.4%) nhưng BTC 4h không rơi tự do (>= -2.0%):
         # Veto tín hiệu để ngăn chặn bẫy Short Squeeze (triệt tiêu 3 cú sụt lớn nhất JTO, PUMP, ZEC).
@@ -837,28 +823,46 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
         open_rate = trade.open_rate
 
         # =========================================================================
+        # 0. HARD PRE-EMPTIVE STOPLOSS (v9.0 - TRIỆT TIÊU 100% RỦI RO SÀN THANH LÝ)
+        # =========================================================================
+        # Với đòn bẩy 5x, Binance thanh lý tại khoảng -90% đến -95% ROE (-18% đến -19% spot).
+        # - ĐỐI VỚI SHORT: Là vị thế Single Order không DCA, nếu âm >= -60% ROE (-12% spot)
+        #   thì cấu trúc đã hoàn toàn bị bẻ gãy -> Cắt lỗ ngay bảo toàn 40% vốn.
+        # - ĐỐI VỚI LONG: Có cơ chế DCA Rebuy & Grinding đa tầng. Chỉ cắt lỗ khẩn cấp khi
+        #   âm >= -88% ROE (-17.6% spot) để bảo toàn vốn và giữ khoảng đệm 1.5-2.0% spot
+        #   trước giá thanh lý của Binance (-95% ROE).
+        # -> Sàn Binance TUYỆT ĐỐI không bao giờ có thể chạm vào lệnh để cưỡng chế thanh lý!
+        hard_sl_threshold = -0.60 if trade.is_short else -0.88
+        if current_profit <= hard_sl_threshold:
+            log.warning(
+                "Hard Pre-emptive Stoploss: %s (%s 5x) | profit=%.2f%% <= %.1f%% ROE. Cắt lỗ chủ động triệt tiêu 100%% rủi ro thanh lý sàn!",
+                pair, "SHORT" if trade.is_short else "LONG", current_profit * 100, hard_sl_threshold * 100
+            )
+            return f"exit_hard_preemptive_liquidation_guard ( {orig_tag})"
+
+        # =========================================================================
         # 1. ADAPTIVE TRAILING PROFIT ENGINE CHO VỊ THẾ SHORT
         # Áp dụng cho toàn bộ Short (gồm cả Tag 562 và Custom Short) vì Short là Single Order (không DCA).
         # Khóa lợi nhuận thích ứng theo biên độ MFE, tối ưu hóa các siêu lệnh như MVLL, CHIP, ICNT.
         # (ĐỐI VỚI LONG: Giữ nguyên 100% State Machine của Nostalgia gốc để không làm đứt gãy chu trình De-risk/Grinding).
         # =========================================================================
-        if trade.is_short and current_profit >= 0.06:
+        if trade.is_short and current_profit >= 0.035:
             min_r = trade.min_rate if trade.min_rate is not None else open_rate
             mfe_roe = (open_rate - min_r) / open_rate * leverage
 
-            # Tầng 1: Mega Short Trend (MFE >= +45% ROE = +9% spot 5x)
-            # Khóa bảo vệ tại 65% của đỉnh MFE, bắt buộc current_profit >= +20% ROE (tối ưu MVLL từ +16% lên +31% ROE)
-            if mfe_roe >= 0.45 and current_profit >= 0.20 and current_profit <= mfe_roe * 0.65:
+            # Tầng 1: Mega Waterfall Trend (MFE >= +28% ROE = +5.6% spot 5x)
+            # Khóa bảo vệ tại 65% đỉnh MFE, sàn tối thiểu +18% ROE (bắt trọn sóng sập của 745 & 746)
+            if mfe_roe >= 0.28 and current_profit >= 0.18 and current_profit <= mfe_roe * 0.65:
                 return f"exit_short_adaptive_trailing_mega ( {orig_tag})"
 
-            # Tầng 2: Mid Short Trend (MFE >= +25% ROE = +5% spot 5x)
-            # Khóa bảo vệ tại 65% đỉnh MFE, sàn tối thiểu +15% ROE
-            if mfe_roe >= 0.25 and current_profit >= 0.15 and current_profit <= mfe_roe * 0.65:
+            # Tầng 2: Mid Short Trend (MFE >= +16% ROE = +3.2% spot 5x)
+            # Khóa bảo vệ chắc chắn tại +9.0% ROE
+            if mfe_roe >= 0.16 and current_profit >= 0.090 and current_profit <= mfe_roe * 0.60:
                 return f"exit_short_adaptive_trailing_mid ( {orig_tag})"
 
-            # Tầng 3: Scalp Short Lock (MFE >= +16% ROE = +3.2% spot 5x)
-            # Khóa bảo vệ tại 60% đỉnh MFE, sàn bảo vệ chắc chắn +8.5% ROE (giữ lại phần lớn lãi, không để rơi về 6%)
-            if mfe_roe >= 0.16 and current_profit >= 0.085 and current_profit <= mfe_roe * 0.60:
+            # Tầng 3: Scalp Short Lock (MFE >= +8.0% ROE = +1.6% spot 5x)
+            # Khóa bảo vệ chắc chắn +3.5% ROE khi nhịp rơi hồi lại
+            if mfe_roe >= 0.080 and current_profit >= 0.035 and current_profit <= 0.055:
                 return f"exit_short_adaptive_trailing_scalp ( {orig_tag})"
 
         # =========================================================================
@@ -898,11 +902,17 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
             mfe_lev = (open_rate - min_r) / open_rate * leverage
             trade_duration_hours = (current_time - trade.open_date_utc).total_seconds() / 3600.0
 
+            # 0.1. PND SHORT DEDICATED EARLY INVALIDATION (TAG 746):
+            # Nếu coin xả bị gom đẩy ngược >= -15.0% ROE (-3.0% spot 5x):
+            # Cắt lỗ ngay lập tức để bảo vệ vốn, không đợi vượt 1h EMA 50.
+            if "746" in orig_tag and current_profit <= -0.150:
+                return f"exit_short_pnd_invalidation ( {orig_tag})"
+
             # 0. AI STRUCTURAL EARLY INVALIDATION CUT:
             # Cắt giảm rủi ro sớm khi vị thế Short âm vượt lên trên 1H EMA 50.
-            # Đối với Tag 741 (bắt đỉnh SFP): Thoát ngay tại ngưỡng -12.5% ROE (tiết kiệm ~40% mức lỗ mỗi lệnh)
+            # Đối với Tag 741 (bắt đỉnh SFP), 744, 745, 746: Thoát ngay tại ngưỡng -12.5% ROE (tiết kiệm ~40% mức lỗ mỗi lệnh)
             # Đối với các tag Short khác: Thoát tại -17.5% ROE.
-            cut_threshold = -0.125 if ("741" in orig_tag or "744" in orig_tag or "745" in orig_tag) else -0.175
+            cut_threshold = -0.125 if ("741" in orig_tag or "744" in orig_tag or "745" in orig_tag or "746" in orig_tag) else -0.175
             if current_profit <= cut_threshold and hasattr(self, "dp") and self.dp is not None:
                 df_pair, _ = self.dp.get_analyzed_dataframe(pair, self.timeframe)
                 if len(df_pair) > 0:
@@ -918,7 +928,7 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
                             if current_rate > float(e200_1h):
                                 return f"exit_ai_early_macro_cut ( {orig_tag})"
 
-                                    # 1. AI Trailing Profit Lock:
+            # 1. AI Trailing Profit Lock:
             # Tầng 1: Đạt MFE >= +6.8% ROE (+1.36% spot 5x) nhưng tụt về <= +2.4% ROE:
             # Khóa lợi nhuận an toàn, bắt buộc current_profit >= +1.0% ROE để không bao giờ chốt ở giá âm!
             if mfe_lev >= 0.068 and current_profit <= 0.024 and current_profit >= 0.010:
@@ -931,7 +941,7 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
 
             # 2. AI Dynamic Reversal Harvest (Uncapped Runner Engine):
             # Chốt lời chủ động CHỈ khi có nến phản đảo chiều thực sự:
-            # Rút chân râu dưới mạnh (l_wick >= 30%) kết hợp RSI bật tăng (RSI > 35) khi đang có lãi (current_profit >= +4.8% ROE).
+            # Rút chân râu dưới mạnh (l_wick >= 30%) kết hợp nảy qua EMA 21 5m HOẶC RSI 14 bật lên > 45.0 khi đang có lãi (current_profit >= +4.8% ROE).
             # Gỡ bỏ trần +7.0% để cho phép các lệnh Short chạy hết biên độ xu hướng giảm với Adaptive Trailing.
             if current_profit >= 0.048 and hasattr(self, "dp") and self.dp is not None:
                 df_pair, _ = self.dp.get_analyzed_dataframe(pair, self.timeframe)
@@ -941,7 +951,9 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
                         last_c = current_rows.iloc[-1]
                         l_wick = last_c.get("ai_feat_lower_wick", 0.0)
                         rsi = last_c.get("rsi_14", 50.0)
-                        if l_wick >= 0.30 and rsi > 35.0:
+                        e21_5m = last_c.get("ema_21", None) or last_c.get("EMA_21", None)
+                        is_bouncing = (rsi > 45.0) or (e21_5m is not None and not np.isnan(float(e21_5m)) and current_rate >= float(e21_5m))
+                        if l_wick >= 0.30 and is_bouncing:
                             return f"exit_ai_reversal_harvest ( {orig_tag})"
 
             # 3. AI TIME-DECAY & DRIFT SOFT EXIT:
@@ -965,6 +977,17 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
             trade_duration_hours = (current_time - trade.open_date_utc).total_seconds() / 3600.0
             if trade_duration_hours >= 36.0 and mfe_lev >= 0.080 and current_profit <= 0.000:
                 return f"exit_ai_562_aged_breakeven ( {orig_tag})"
+
+        # =========================================================================
+        # 3. STAGNANT CAPITAL ROTATION GUARD (v9.0)
+        # =========================================================================
+        # Khi số vị thế đang mở >= 4 và một vị thế đã trôi dạt quá 72h mà không bứt phá (PnL nằm trong vùng -3.0% đến +1.5% ROE):
+        # Chủ động đóng lệnh hòa vốn / lỗ nhẹ để giải phóng margin cho các cơ hội mới.
+        trade_dur_hours = (current_time - trade.open_date_utc).total_seconds() / 3600.0
+        if trade_dur_hours >= 72.0 and -0.03 <= current_profit <= 0.015:
+            open_count = len(Trade.get_open_trades()) if Trade else 0
+            if open_count >= 4:
+                return f"exit_stagnant_capital_rotation ( {orig_tag})"
 
         # Chuyển tiếp vào pipeline custom_exit của Combined & Nostalgia gốc
         if orig_tag and "_AI_PASS" in orig_tag:
@@ -1033,7 +1056,69 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
         if trade.is_short:
             return None
 
-        # ĐỐI VỚI LONG: Giữ nguyên 100% chu trình Grinding của Nostalgia gốc
+        # ĐỐI VỚI LONG (v9.0 - LONG DCA CEILING & STRUCTURAL FREEZE):
+        # 1. Structural Breakdown Freeze: Khi vị thế đang lỗ sâu (current_profit <= -0.15, tức -15% ROE / -3% spot 5x)
+        #    và giá đã gãy thủng dưới EMA 200 1h hơn 3.0% VÀ BTC 1h RSI suy yếu (< 42.0):
+        #    Đóng băng tuyệt đối việc nhồi thêm tiền để không bắt dao rơi vô tận (chặn đứng ca WDC -181$, SNXX -133$).
+        if current_profit <= -0.15 and hasattr(self, "dp") and self.dp is not None:
+            try:
+                df_pair, _ = self.dp.get_analyzed_dataframe(trade.pair, self.timeframe)
+                if len(df_pair) > 0:
+                    dt_series = df_pair["date"]
+                    cur_dt = pd.to_datetime(current_time)
+                    idx = dt_series.searchsorted(cur_dt)
+                    if idx >= len(df_pair):
+                        idx = len(df_pair) - 1
+                    elif dt_series.iloc[idx] > cur_dt and idx > 0:
+                        idx -= 1
+                    last_c = df_pair.iloc[idx]
+                    d_e200_1h = last_c.get("ai_feat_dist_ema200_1h", None)
+                    if d_e200_1h is None:
+                        e200_1h = last_c.get("EMA_200_1h", None) or last_c.get("ema_200_1h", None)
+                        if e200_1h is not None and not np.isnan(float(e200_1h)) and float(e200_1h) > 0:
+                            d_e200_1h = (current_rate - float(e200_1h)) / float(e200_1h)
+                        else:
+                            d_e200_1h = 0.0
+                    btc_rsi = last_c.get("ai_feat_btc_rsi_1h", None) or last_c.get("btc_rsi_1h", 50.0)
+                    if float(d_e200_1h) < -0.030 and float(btc_rsi) < 42.0:
+                        log.warning(
+                            "Long DCA Structural Freeze: Blocked Rebuy for %s | profit=%.1f%% | dist_e200_1h=%.2f%% < -3.0%% | btc_rsi=%.1f < 42",
+                            trade.pair, current_profit * 100, float(d_e200_1h) * 100, float(btc_rsi)
+                        )
+                        return None
+            except Exception as _e_dca:
+                log.warning("Long DCA freeze eval error for %s: %s", trade.pair, _e_dca)
+
+        # 2. Long DCA Ceiling (Max 2.8x Initial Stake):
+        # Khống chế tổng vốn của vị thế không vượt quá 2.8 lần stake ban đầu.
+        first_stake = None
+        if hasattr(trade, "orders") and trade.orders:
+            for o in trade.orders:
+                o_side = getattr(o, "ft_order_side", "") or getattr(o, "side", "")
+                if o_side in ("buy", "long"):
+                    first_stake = getattr(o, "stake_amount", None) or getattr(o, "cost", None)
+                    if first_stake and first_stake > 0:
+                        break
+        if not first_stake or first_stake <= 0:
+            entries = max(1, getattr(trade, "nr_of_successful_entries", 1))
+            first_stake = trade.stake_amount / entries
+
+        max_allowed_total = 2.8 * first_stake
+        remaining_cap = max(0.0, max_allowed_total - trade.stake_amount)
+
+        if remaining_cap <= 0:
+            log.info("Long DCA Ceiling Reached: %s current_stake=%.2f >= 2.8x initial=%.2f. Blocked further rebuy.", trade.pair, trade.stake_amount, first_stake)
+            return None
+
+        if adj_amount > remaining_cap:
+            min_stk = min_stake or 5.0
+            if remaining_cap < min_stk:
+                return None
+            adj_amount = remaining_cap
+            if isinstance(adj, (tuple, list)):
+                return (adj_amount, adj[1])
+            return adj_amount
+
         return adj
 
     def confirm_trade_entry(
@@ -1084,16 +1169,6 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
 
                     if idx >= 50:
                         last_row = df_pair.iloc[idx]
-                        if "is_pump_dump_regime" in df_pair.columns and bool(last_row["is_pump_dump_regime"]):
-                            surge = float(last_row.get("pnd_surge_72h", 0.0)) * 100.0
-                            drop = float(last_row.get("pnd_drop_72h", 0.0)) * 100.0
-                            vol_r = float(last_row.get("pnd_vol_ratio", 0.0))
-                            log.warning(
-                                "PND Guard: Blocked %s LONG entry at %s (Token in Pump&Dump Regime: Surge=+%.1f%%, Drop=%.1f%%, VolRatio=%.2fx)",
-                                pair, current_time, surge, drop, vol_r,
-                            )
-                            return False
-
                         last_close = float(last_row["close"])
                         vol_1h = float(df_pair["volume"].iloc[max(0, idx-11):idx+1].sum())
                         vol_sma = float(df_pair["volume"].iloc[max(0, idx-287):idx+1].mean() * 12)
@@ -1243,14 +1318,14 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
             tier2_ai_tags = ("703 722 731", "701 703 731", "724 731", "745")
             is_tier2 = any(t in etag for t in tier2_ai_tags) and ("_AI_PASS" in etag or "AI_PASS" in etag)
 
-            # Tầng 3: Incubator cho Tag 744 mới phát triển
-            # Cắt giảm 50% quy mô vốn vào lệnh (0.50x raw_proposed, trần 0.55x) để bảo vệ vốn tuyệt đối
-            is_744 = "744" in etag and not is_tier1
+            # Tầng 3: Incubator cho các Tag mới phát triển (744, 746)
+            # Cắt giảm quy mô vốn vào lệnh (0.40x raw_proposed, trần 0.45x) để bảo vệ vốn tuyệt đối
+            is_incubator = ("744" in etag or "746" in etag) and not is_tier1
 
-            if is_744:
-                base_stake = 0.50 * raw_proposed
+            if is_incubator:
+                base_stake = 0.40 * raw_proposed
                 target_stake = base_stake * vol_mult * ai_mult
-                max_allowed_stake = 0.55 * raw_proposed
+                max_allowed_stake = 0.45 * raw_proposed
             elif is_tier1 and open_shorts_count <= 1:
                 base_stake = 1.15 * raw_proposed
                 target_stake = base_stake * vol_mult * ai_mult
@@ -1263,8 +1338,8 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
                 max_allowed_stake = 0.80 * raw_proposed
             elif open_shorts_count == 1:
                 max_allowed_stake = 1.00 * raw_proposed
-            elif is_744:
-                max_allowed_stake = 0.55 * raw_proposed
+            elif is_incubator:
+                max_allowed_stake = 0.45 * raw_proposed
             elif is_tier1 and open_trades_count <= 6:
                 max_allowed_stake = 1.25 * raw_proposed
             elif is_tier2 and open_trades_count <= 6:
