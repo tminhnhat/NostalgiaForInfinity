@@ -74,7 +74,7 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
 
     def version(self) -> str:
         base_ver = super().version()
-        return f"{base_ver} + AI_Gatekeeper_v8.4_Tag745_Precision"
+        return f"{base_ver} + AI_Gatekeeper_v8.5_Asymmetric_PND_Guard"
 
     def __init__(self, config: dict) -> None:
         # Tạm thời ẩn các key custom khỏi nfi_parameters để Nostalgia gốc không log warning không cần thiết
@@ -440,6 +440,34 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
         btc_roc_4h = df["btc_ROC_9_4h"] if "btc_ROC_9_4h" in df.columns else (df["ROC_9_4h"] if "ROC_9_4h" in df.columns else None)
         df["ai_feat_btc_roc_9_4h"] = btc_roc_4h.to_numpy(copy=False).astype(np.float32) if btc_roc_4h is not None else 0.0
 
+        # --- 14. PUMP & DUMP REGIME DETECTOR (ASYMMETRIC DIRECTIONAL GATING v8.5) ---
+        high_72h = df["high"].rolling(window=864, min_periods=50).max()
+        low_72h = df["low"].rolling(window=864, min_periods=50).min()
+        pump_surge_72h = (high_72h - low_72h) / np.maximum(low_72h, 1e-5)
+        drop_from_peak_72h = (df["close"] - high_72h) / np.maximum(high_72h, 1e-5)
+
+        vol_24h = df["volume"].rolling(window=288, min_periods=20).sum()
+        vol_7d_med = vol_24h.rolling(window=2016, min_periods=100).median()
+        vol_24h_ratio = vol_24h / np.maximum(vol_7d_med, 1e-5)
+
+        p_24h_ago = df["close"].shift(288)
+        roc_24h = (df["close"] - p_24h_ago) / np.maximum(p_24h_ago, 1e-5)
+
+        p_4h_ago = df["close"].shift(48)
+        roc_4h = (df["close"] - p_4h_ago) / np.maximum(p_4h_ago, 1e-5)
+
+        # 1. Speculative Pump & Dump Waterfall: Parabolic Surge >= 40% + Deep Dump <= -22% + Volume Explosion >= 2.2x
+        cond1 = (pump_surge_72h >= 0.40) & (drop_from_peak_72h <= -0.22) & (vol_24h_ratio >= 2.2)
+        # 2. Extreme Parabolic Collapse: Surge >= 65% + Waterfall Dump <= -30% + Accelerating 4h momentum <= -10%
+        cond2 = (pump_surge_72h >= 0.65) & (drop_from_peak_72h <= -0.30) & (roc_4h <= -0.10)
+        # 3. Violent Flash Crash: 24h ROC <= -20% accompanied by volume explosion >= 2.5x
+        cond3 = (roc_24h <= -0.20) & (vol_24h_ratio >= 2.5)
+
+        df["is_pump_dump_regime"] = cond1 | cond2 | cond3
+        df["pnd_surge_72h"] = pump_surge_72h.astype(np.float32)
+        df["pnd_drop_72h"] = drop_from_peak_72h.astype(np.float32)
+        df["pnd_vol_ratio"] = vol_24h_ratio.astype(np.float32)
+
         return df
 
     def _compute_ai_probability(self, df: DataFrame, candidate_mask: np.ndarray) -> np.ndarray:
@@ -585,6 +613,28 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
         """
         # 1. Chạy tín hiệu Nostalgia gốc (Tất cả Long & Short gốc như 562)
         df = NostalgiaForInfinityX8.populate_entry_trend(self, df, metadata)
+
+        # 1.0. ASYMMETRIC PUMP & DUMP DIRECTIONAL GATING (VERSION 8.5):
+        # Nếu token đang nằm trong chu kỳ Bơm Xả (P&D Regime):
+        # - TRIỆT TIÊU 100% TÍN HIỆU LONG (enter_long = 0, xóa enter_tag của Long).
+        #   Ngăn chặn triệt để thảm họa bắt dao rơi trên coin rác / coin xả không hồi.
+        # - GIỮ NGUYÊN HOÀN TOÀN TÍN HIỆU SHORT (để Short bắt trọn đà rơi tự do).
+        if "is_pump_dump_regime" in df.columns:
+            pnd_mask = (df["is_pump_dump_regime"] == True).to_numpy()
+            if np.any(pnd_mask) and "enter_long" in df.columns:
+                long_pnd = pnd_mask & (df["enter_long"] == 1).to_numpy()
+                if np.any(long_pnd):
+                    df.loc[long_pnd, "enter_long"] = 0
+                    df.loc[long_pnd, "enter_tag"] = ""
+                    pair = metadata.get("pair", "UNKNOWN")
+                    dates = df.loc[long_pnd, "date"].to_numpy()
+                    for d in dates:
+                        self.veto_audit_records.append({
+                            "date": str(d),
+                            "pair": pair,
+                            "tag": "LONG_PND_VETO",
+                            "status": "VETOED_LONG_ON_PUMP_DUMP"
+                        })
 
         # 1.1. AI Gatekeeper VETO cho tín hiệu Short Tag 562 gốc (Chống bẫy Late Breakdown Squeeze)
         # Khi coin đã rơi quá sâu (dist_e50_1h <= -4.4%) nhưng BTC 4h không rơi tự do (>= -2.0%):
@@ -1019,20 +1069,38 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
         if not base_confirm:
             return False
 
-        # Extreme Volatility & Panic Dump Circuit Breaker cho vị thế Long
+        # Asymmetric Pump & Dump Circuit Breaker cho vị thế Long
         if side in ("long", "buy") and hasattr(self, "dp") and self.dp is not None:
             try:
                 df_pair, _ = self.dp.get_analyzed_dataframe(pair, self.timeframe)
                 if len(df_pair) >= 50:
-                    current_rows = df_pair.loc[df_pair["date"] <= current_time]
-                    if len(current_rows) >= 50:
-                        last_close = float(current_rows["close"].iloc[-1])
-                        vol_1h = float(current_rows["volume"].tail(12).sum())
-                        vol_sma = float(current_rows["volume"].tail(288).mean() * 12)
+                    dt_series = df_pair["date"]
+                    cur_dt = pd.to_datetime(current_time)
+                    idx = dt_series.searchsorted(cur_dt)
+                    if idx >= len(df_pair):
+                        idx = len(df_pair) - 1
+                    elif dt_series.iloc[idx] > cur_dt and idx > 0:
+                        idx -= 1
+
+                    if idx >= 50:
+                        last_row = df_pair.iloc[idx]
+                        if "is_pump_dump_regime" in df_pair.columns and bool(last_row["is_pump_dump_regime"]):
+                            surge = float(last_row.get("pnd_surge_72h", 0.0)) * 100.0
+                            drop = float(last_row.get("pnd_drop_72h", 0.0)) * 100.0
+                            vol_r = float(last_row.get("pnd_vol_ratio", 0.0))
+                            log.warning(
+                                "PND Guard: Blocked %s LONG entry at %s (Token in Pump&Dump Regime: Surge=+%.1f%%, Drop=%.1f%%, VolRatio=%.2fx)",
+                                pair, current_time, surge, drop, vol_r,
+                            )
+                            return False
+
+                        last_close = float(last_row["close"])
+                        vol_1h = float(df_pair["volume"].iloc[max(0, idx-11):idx+1].sum())
+                        vol_sma = float(df_pair["volume"].iloc[max(0, idx-287):idx+1].mean() * 12)
                         vol_ratio = vol_1h / max(vol_sma, 1e-5)
 
-                        idx_4h = -49 if len(current_rows) >= 49 else 0
-                        p_4h_ago = float(current_rows["close"].iloc[idx_4h])
+                        idx_4h = max(0, idx - 48)
+                        p_4h_ago = float(df_pair["close"].iloc[idx_4h])
                         drop_4h = (last_close - p_4h_ago) / max(p_4h_ago, 1e-5)
 
                         if vol_ratio > 8.0 and drop_4h < -0.08:
@@ -1113,47 +1181,53 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
         vol_mult = 1.0
         ai_mult = 1.0
 
+        last_c = None
         if hasattr(self, "dp") and self.dp is not None:
             df_pair, _ = self.dp.get_analyzed_dataframe(pair, self.timeframe)
             if len(df_pair) > 0:
-                current_rows = df_pair.loc[df_pair["date"] <= current_time]
-                if len(current_rows) > 0:
-                    last_c = current_rows.iloc[-1]
+                dt_series = df_pair["date"]
+                cur_dt = pd.to_datetime(current_time)
+                idx = dt_series.searchsorted(cur_dt)
+                if idx >= len(df_pair):
+                    idx = len(df_pair) - 1
+                elif dt_series.iloc[idx] > cur_dt and idx > 0:
+                    idx -= 1
+                last_c = df_pair.iloc[idx]
 
-                    # 2. Trục 1: Inverse ATR Sizing (Benchmark ATR% = 1.2% / nến 5m)
-                    val_atr = last_c.get("ai_feat_atr_norm", None)
-                    if val_atr is not None and not np.isnan(val_atr) and val_atr > 0:
-                        atr_norm = float(val_atr)
-                        vol_mult = 0.012 / atr_norm
-                        vol_mult = float(np.clip(vol_mult, 0.75, 1.25))
+                # 2. Trục 1: Inverse ATR Sizing (Benchmark ATR% = 1.2% / nến 5m)
+                val_atr = last_c.get("ai_feat_atr_norm", None)
+                if val_atr is not None and not np.isnan(val_atr) and val_atr > 0:
+                    atr_norm = float(val_atr)
+                    vol_mult = 0.012 / atr_norm
+                    vol_mult = float(np.clip(vol_mult, 0.75, 1.25))
 
-                    # 3. Trục 2: AI Confidence Sizing (áp dụng khi có ai_short_prob)
-                    val_prob = last_c.get("ai_short_prob", None)
-                    if val_prob is not None and not np.isnan(val_prob) and val_prob > 0:
-                        p = float(val_prob)
-                        p_high = 0.75
-                        p_low = 0.60
-                        if p >= p_high:
-                            ai_mult = 1.15
-                        elif p < p_low:
-                            ai_mult = 0.85
+                # 3. Trục 2: AI Confidence Sizing (áp dụng khi có ai_short_prob)
+                val_prob = last_c.get("ai_short_prob", None)
+                if val_prob is not None and not np.isnan(val_prob) and val_prob > 0:
+                    p = float(val_prob)
+                    p_high = 0.75
+                    p_low = 0.60
+                    if p >= p_high:
+                        ai_mult = 1.15
+                    elif p < p_low:
+                        ai_mult = 0.85
 
-        macro_long_mult = 1.0
-        if side in ("long", "buy") and hasattr(self, "dp") and self.dp is not None:
-            if len(df_pair) > 0 and len(current_rows) > 0:
-                val_btc_d4 = last_c.get("ai_feat_btc_dist_ema200_4h", None)
-                val_btc_rsi = last_c.get("ai_feat_btc_rsi_1h", None)
-                if val_btc_d4 is not None and val_btc_rsi is not None:
-                    if float(val_btc_d4) >= -0.010 and float(val_btc_rsi) >= 48.0 and open_trades_count <= 5:
-                        macro_long_mult = 1.15
-
-        target_stake = base_stake * vol_mult * ai_mult * macro_long_mult
-
-        # 4. Dynamic Margin Buffer & Disciplined Sizing Belts (Khống chế chặt chẽ quanh raw_proposed):
+        # 4. Open trades metrics:
         open_trades_list = Trade.get_open_trades() if Trade else []
         open_trades_count = len(open_trades_list)
         open_shorts_count = sum(1 for t in open_trades_list if getattr(t, "is_short", False))
 
+        macro_long_mult = 1.0
+        if side in ("long", "buy") and last_c is not None:
+            val_btc_d4 = last_c.get("ai_feat_btc_dist_ema200_4h", None)
+            val_btc_rsi = last_c.get("ai_feat_btc_rsi_1h", None)
+            if val_btc_d4 is not None and val_btc_rsi is not None:
+                if float(val_btc_d4) >= -0.010 and float(val_btc_rsi) >= 48.0 and open_trades_count <= 5:
+                    macro_long_mult = 1.15
+
+        target_stake = base_stake * vol_mult * ai_mult * macro_long_mult
+
+        # Dynamic Margin Buffer & Disciplined Sizing Belts (Khống chế chặt chẽ quanh raw_proposed):
         # Trần cho Long: Tối đa 1.25x raw_proposed nếu slot <= 6, ngược lại <= 1.05x raw_proposed
         max_allowed_stake = (1.25 * raw_proposed) if open_trades_count <= 6 else (1.05 * raw_proposed)
 

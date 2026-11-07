@@ -204,3 +204,4 @@ account*.txt
 !configs/exampleconfig_secret.json
 
 user_data/nfix8-*.json
+user_data/deep_dive_losing_trades.json
