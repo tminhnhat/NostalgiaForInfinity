@@ -48,6 +48,9 @@ def v4_case(request, level):
     stakes = f"system_v4_grind_{level}_stakes_{market}"
     setattr(strategy, stakes, [0.15] * len(getattr(strategy, stakes)))
     setattr(strategy, f"system_v4_grind_{level}_derisk_{market}", -0.10)
+    # Pin the ladder so this fixture tests funding and routing, not the shipped defaults.
+    thresholds = f"system_v4_grind_{level}_thresholds_{market}"
+    setattr(strategy, thresholds, [-0.06] * len(getattr(strategy, thresholds)))
   strategy.long_grind_entry_v4 = MagicMock(return_value=True)
   strategy.short_grind_entry_v4 = MagicMock(return_value=True)
   strategy.dp = DataProvider(strategy.config, None)
@@ -228,6 +231,8 @@ def test_forced_derisk_keeps_priority_without_entry_funds(v4_case, level):
 def test_pre_derisk_entry_preserves_funding_and_later_reduction(v4_case, level, funded):
   strategy, trade, _ = v4_case
   strategy.system_v4_grind_entry_before_derisk_enable = True
+  # This trade already holds 63.7% of the first entry, so lift the route's own 0.5 stake cap.
+  strategy.system_v4_grind_entry_before_derisk_max_stake = 2.0
   strategy.long_grind_entry_v4 = MagicMock(return_value=False)
   strategy.short_grind_entry_v4 = MagicMock(return_value=False)
   strategy.system_v4_grind_2_use_derisk = True
