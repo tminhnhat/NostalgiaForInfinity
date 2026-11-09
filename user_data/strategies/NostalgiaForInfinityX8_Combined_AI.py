@@ -1261,12 +1261,22 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
             df_pair, _ = self.dp.get_analyzed_dataframe(pair, self.timeframe)
             if len(df_pair) > 0:
                 dt_series = df_pair["date"]
-                cur_dt = pd.to_datetime(current_time)
-                idx = dt_series.searchsorted(cur_dt)
-                if idx >= len(df_pair):
+                try:
+                    cur_dt = pd.to_datetime(current_time)
+                    if hasattr(dt_series.dtype, "tz") and dt_series.dt.tz is not None:
+                        if cur_dt.tzinfo is None:
+                            cur_dt = cur_dt.tz_localize("UTC")
+                        else:
+                            cur_dt = cur_dt.tz_convert(dt_series.dt.tz)
+                    elif cur_dt.tzinfo is not None:
+                        cur_dt = cur_dt.tz_localize(None)
+                    idx = int(dt_series.searchsorted(cur_dt))
+                    if idx >= len(df_pair):
+                        idx = len(df_pair) - 1
+                    elif dt_series.iloc[idx] > cur_dt and idx > 0:
+                        idx -= 1
+                except Exception:
                     idx = len(df_pair) - 1
-                elif dt_series.iloc[idx] > cur_dt and idx > 0:
-                    idx -= 1
                 last_c = df_pair.iloc[idx]
 
                 # 2. Trục 1: Inverse ATR Sizing (Benchmark ATR% = 1.2% / nến 5m)
