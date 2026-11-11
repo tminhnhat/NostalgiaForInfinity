@@ -133,6 +133,16 @@ jobs:
             cat reports/latest_report.md >> $GITHUB_STEP_SUMMARY
           fi
 
+      - name: Send Telegram Notification
+        if: always()
+        env:
+          FREQTRADE__TELEGRAM__TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          FREQTRADE__TELEGRAM__CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: |
+          python scripts/notify_telegram.py \
+            --report reports/latest_report.md \
+            --context-title "🚀 DAILY EVALUATION BACKTEST (GitHub Actions)"
+
       - name: Upload Backtest & Report Artifacts
         if: always()
         uses: actions/upload-artifact@v4
