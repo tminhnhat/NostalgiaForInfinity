@@ -34,16 +34,16 @@ def main():
     parser.add_argument("--run-url", type=str, default=None, help="GitHub Actions run URL")
     args = parser.parse_args()
 
-    days = 180
+    days = 240
     if args.days is not None:
         days = args.days
     elif args.config and args.config.exists():
         try:
             with open(args.config, "r", encoding="utf-8") as f:
                 cfg = json.load(f)
-                days = int(cfg.get("backtest_days", 180))
+                days = int(cfg.get("backtest_days", 240))
         except Exception:
-            days = 180
+            days = 240
 
     if args.timerange:
         timerange = args.timerange

@@ -164,6 +164,13 @@ def process_pair_timeframe(
             combined = combined.drop_duplicates(subset=["date"]).sort_values(by="date")
         except Exception:
             combined = new_data.drop_duplicates(subset=["date"]).sort_values(by="date")
+    elif target_feather.exists():
+        try:
+            existing = pd.read_feather(target_feather)
+            combined = pd.concat([existing, new_data], ignore_index=True)
+            combined = combined.drop_duplicates(subset=["date"]).sort_values(by="date")
+        except Exception:
+            combined = new_data.drop_duplicates(subset=["date"]).sort_values(by="date")
     else:
         combined = new_data.drop_duplicates(subset=["date"]).sort_values(by="date")
 
@@ -214,14 +221,31 @@ def main():
             pair_filename_base = pair.replace("/", "_").replace(":", "_")
             suffix = "-futures" if is_futures else ""
             target_feather = target_dir / f"{pair_filename_base}-{tf}{suffix}.feather"
-            if args.skip_existing and target_feather.exists() and target_feather.stat().st_size > 10000:
-                logger.info(f"Skipping {target_feather.name} (already exists)")
+            pair_dates = dates_to_fetch
+            if target_feather.exists() and target_feather.stat().st_size > 10000:
+                try:
+                    df_exist = pd.read_feather(target_feather, columns=["date"])
+                    if not df_exist.empty:
+                        min_dt = df_exist["date"].min().tz_localize(None) if df_exist["date"].min().tzinfo else df_exist["date"].min()
+                        target_start = (now_utc - timedelta(days=days)).replace(tzinfo=None)
+                        if min_dt <= target_start + timedelta(days=2):
+                            if args.skip_existing:
+                                logger.info(f"Skipping {target_feather.name} (already covers {days} days)")
+                                continue
+                        else:
+                            existing_dates = set(pd.to_datetime(df_exist["date"]).dt.strftime("%Y-%m-%d"))
+                            pair_dates = [d for d in dates_to_fetch if d not in existing_dates]
+                            logger.info(f"Backfilling {len(pair_dates)} missing earlier dates for {target_feather.name}...")
+                except Exception:
+                    pass
+
+            if not pair_dates:
                 continue
 
             process_pair_timeframe(
                 pair=pair,
                 tf=tf,
-                dates=dates_to_fetch,
+                dates=pair_dates,
                 market=market,
                 output_dir=args.output_dir,
                 is_futures=is_futures,
