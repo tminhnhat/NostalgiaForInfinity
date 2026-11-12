@@ -8,7 +8,7 @@ on:
       days:
         description: 'Number of rolling days to evaluate'
         required: false
-        default: '180'
+        default: '240'
       strategy:
         description: 'Strategy to evaluate'
         required: false
@@ -105,7 +105,7 @@ jobs:
         run: |
           python scripts/download_candles.py \
             --config configs/backtest_config.json \
-            --days ${{ github.event.inputs.days || 180 }} \
+            --days ${{ github.event.inputs.days || 240 }} \
             --output-dir user_data/data/binance \
             --workers 24 \
             --skip-existing
@@ -119,7 +119,7 @@ jobs:
           python scripts/run_eval_backtest.py \
             --config configs/backtest_config.json \
             --strategy ${{ github.event.inputs.strategy || 'NostalgiaForInfinityX8_Combined_AI' }} \
-            --days ${{ github.event.inputs.days || 180 }} \
+            --days ${{ github.event.inputs.days || 240 }} \
             --version "${{ steps.meta.outputs.version }}" \
             --commit-sha "${{ steps.meta.outputs.short_sha }}" \
             --run-label "${{ steps.meta.outputs.run_label }}" \
