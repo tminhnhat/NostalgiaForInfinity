@@ -45,8 +45,8 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
     ai_fallback_model_path: str = "user_data/models/nfix8_short_ai_v2.pkl"
 
     # Danh sách các tag custom Short bị loại bỏ:
-    # Ở v7.1 & v9.0, loại bỏ các tag có kỳ vọng âm hoặc nhiễu cao (701 702 703 731, 703 706 731, 703 721 731, 746)
-    disabled_custom_short_tags: set = {"701 702 703 731", "703 706 731", "703 721 731", "746"}
+    # Ở v7.1, v9.0 & v10.0, loại bỏ các tag có kỳ vọng âm hoặc nhiễu cao (701 702 703 731, 703 706 731, 703 721 731, 744, 746)
+    disabled_custom_short_tags: set = {"701 702 703 731", "703 706 731", "703 721 731", "744", "746"}
 
     # Toggles cho từng điều kiện Short custom (tương tự short_entry_signal_params của Nostalgia gốc)
     custom_short_signal_params: dict = {
@@ -68,14 +68,14 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
         "custom_short_741_enable": True,
         "custom_short_742_enable": True,
         "custom_short_743_enable": True,
-        "custom_short_744_enable": True,
+        "custom_short_744_enable": False,
         "custom_short_745_enable": True,
         "custom_short_746_enable": False,
     }
 
     def version(self) -> str:
         base_ver = super().version()
-        return f"{base_ver} + AI_Gatekeeper_v9.0_Alpha_Maximus"
+        return f"{base_ver} + AI_Gatekeeper_v10.0_Alpha_Prime"
 
     def __init__(self, config: dict) -> None:
         # Tạm thời ẩn các key custom khỏi nfi_parameters để Nostalgia gốc không log warning không cần thiết
@@ -832,7 +832,7 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
         #   âm >= -88% ROE (-17.6% spot) để bảo toàn vốn và giữ khoảng đệm 1.5-2.0% spot
         #   trước giá thanh lý của Binance (-95% ROE).
         # -> Sàn Binance TUYỆT ĐỐI không bao giờ có thể chạm vào lệnh để cưỡng chế thanh lý!
-        hard_sl_threshold = -0.60 if trade.is_short else -0.88
+        hard_sl_threshold = -0.35 if trade.is_short else -0.88
         if current_profit <= hard_sl_threshold:
             log.warning(
                 "Hard Pre-emptive Stoploss: %s (%s 5x) | profit=%.2f%% <= %.1f%% ROE. Cắt lỗ chủ động triệt tiêu 100%% rủi ro thanh lý sàn!",
@@ -858,6 +858,11 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
             # Tầng 2: Mid Short Trend (MFE >= +16% ROE = +3.2% spot 5x)
             # Khóa bảo vệ chắc chắn tại +9.0% ROE
             if mfe_roe >= 0.16 and current_profit >= 0.090 and current_profit <= mfe_roe * 0.60:
+                return f"exit_short_adaptive_trailing_mid ( {orig_tag})"
+
+            # Tầng 2.5: Low-Mid Short Trend (MFE >= +12% ROE = +2.4% spot 5x)
+            # Khóa bảo vệ chắc chắn tại 60% đỉnh MFE, sàn tối thiểu +6.5% ROE
+            if mfe_roe >= 0.12 and current_profit >= 0.065 and current_profit <= mfe_roe * 0.60:
                 return f"exit_short_adaptive_trailing_mid ( {orig_tag})"
 
             # Tầng 3: Scalp Short Lock (MFE >= +8.0% ROE = +1.6% spot 5x)
@@ -928,15 +933,13 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
                             if current_rate > float(e200_1h):
                                 return f"exit_ai_early_macro_cut ( {orig_tag})"
 
-            # 1. AI Trailing Profit Lock:
-            # Tầng 1: Đạt MFE >= +6.8% ROE (+1.36% spot 5x) nhưng tụt về <= +2.4% ROE:
-            # Khóa lợi nhuận an toàn, bắt buộc current_profit >= +1.0% ROE để không bao giờ chốt ở giá âm!
-            if mfe_lev >= 0.068 and current_profit <= 0.024 and current_profit >= 0.010:
+            # 1. AI Trailing Profit Lock (v10.0 - Nới nhẹ để ăn trọn sóng Short):
+            # Tầng 1: Đạt MFE >= +7.5% ROE nhưng tụt về <= +2.8% ROE (tối thiểu +1.2% ROE):
+            if mfe_lev >= 0.075 and current_profit <= 0.028 and current_profit >= 0.012:
                 return f"exit_ai_profit_lock ( {orig_tag})"
 
-            # Tầng 2: Đạt MFE >= +11.0% ROE nhưng tụt về <= +4.5% ROE:
-            # Khóa bảo vệ phần lớn thặng dư lợi nhuận!
-            if mfe_lev >= 0.110 and current_profit <= 0.045 and current_profit >= 0.025:
+            # Tầng 2: Đạt MFE >= +12.0% ROE nhưng tụt về <= +5.2% ROE (tối thiểu +2.8% ROE):
+            if mfe_lev >= 0.120 and current_profit <= 0.052 and current_profit >= 0.028:
                 return f"exit_ai_profit_lock ( {orig_tag})"
 
             # 2. AI Dynamic Reversal Harvest (Uncapped Runner Engine):
@@ -1103,7 +1106,11 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
             entries = max(1, getattr(trade, "nr_of_successful_entries", 1))
             first_stake = trade.stake_amount / entries
 
-        max_allowed_total = 2.8 * first_stake
+        long_tag_tokens = set((getattr(trade, "enter_tag", "") or "").split())
+        risky_long_tags = {"3", "4", "45", "120"}
+        elite_long_tags = {"1", "2", "6", "42", "43", "44", "62", "64", "65", "141", "142"}
+        dca_cap_mult = 2.0 if (long_tag_tokens & risky_long_tags and not (long_tag_tokens & elite_long_tags)) else 2.8
+        max_allowed_total = dca_cap_mult * first_stake
         remaining_cap = max(0.0, max_allowed_total - trade.stake_amount)
 
         if remaining_cap <= 0:
@@ -1280,11 +1287,9 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
                 val_prob = last_c.get("ai_short_prob", None)
                 if val_prob is not None and not np.isnan(val_prob) and val_prob > 0:
                     p = float(val_prob)
-                    p_high = 0.75
-                    p_low = 0.60
-                    if p >= p_high:
-                        ai_mult = 1.15
-                    elif p < p_low:
+                    if p >= 0.72:
+                        ai_mult = 1.25
+                    elif p < 0.60:
                         ai_mult = 0.85
 
         # 4. Open trades metrics:
@@ -1293,18 +1298,40 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
         open_shorts_count = sum(1 for t in open_trades_list if getattr(t, "is_short", False))
 
         macro_long_mult = 1.0
-        if side in ("long", "buy") and last_c is not None:
-            val_btc_d4 = last_c.get("ai_feat_btc_dist_ema200_4h", None)
-            val_btc_rsi = last_c.get("ai_feat_btc_rsi_1h", None)
-            if val_btc_d4 is not None and val_btc_rsi is not None:
-                if float(val_btc_d4) >= -0.010 and float(val_btc_rsi) >= 48.0 and open_trades_count <= 5:
-                    macro_long_mult = 1.15
+        long_tier_mult = 1.0
+        elite_long_tags = {"1", "2", "6", "42", "43", "44", "62", "64", "65", "141", "142"}
+        risky_long_tags = {"3", "4", "45", "120"}
+        etag_tokens = set(str(entry_tag or "").split())
+        is_elite_long = side in ("long", "buy") and bool(etag_tokens & elite_long_tags)
+        is_risky_long = side in ("long", "buy") and bool(etag_tokens & risky_long_tags) and not is_elite_long
 
-        target_stake = base_stake * vol_mult * ai_mult * macro_long_mult
+        if side in ("long", "buy"):
+            if is_elite_long:
+                long_tier_mult = 1.22 if open_trades_count <= 4 else 1.15
+            elif is_risky_long:
+                long_tier_mult = 0.70
+
+            if last_c is not None:
+                val_btc_d4 = last_c.get("ai_feat_btc_dist_ema200_4h", None)
+                val_btc_rsi = last_c.get("ai_feat_btc_rsi_1h", None)
+                if val_btc_d4 is not None and val_btc_rsi is not None:
+                    if float(val_btc_d4) >= -0.010 and float(val_btc_rsi) >= 48.0 and open_trades_count <= 5:
+                        macro_long_mult = 1.15
+
+        target_stake = base_stake * vol_mult * ai_mult * macro_long_mult * long_tier_mult
 
         # Dynamic Margin Buffer & Disciplined Sizing Belts (Khống chế chặt chẽ quanh raw_proposed):
-        # Trần cho Long: Tối đa 1.25x raw_proposed nếu slot <= 6, ngược lại <= 1.05x raw_proposed
-        max_allowed_stake = (1.25 * raw_proposed) if open_trades_count <= 6 else (1.05 * raw_proposed)
+        if is_elite_long:
+            if open_trades_count <= 4:
+                max_allowed_stake = 1.45 * raw_proposed
+            elif open_trades_count <= 6:
+                max_allowed_stake = 1.35 * raw_proposed
+            else:
+                max_allowed_stake = 1.15 * raw_proposed
+        elif is_risky_long:
+            max_allowed_stake = (0.85 * raw_proposed) if open_trades_count <= 6 else (0.75 * raw_proposed)
+        else:
+            max_allowed_stake = (1.25 * raw_proposed) if open_trades_count <= 6 else (1.05 * raw_proposed)
 
         # Phân tầng trần cho vị thế Short:
         if side in ("short", "sell"):
@@ -1319,31 +1346,35 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
             is_tier2 = any(t in etag for t in tier2_ai_tags) and ("_AI_PASS" in etag or "AI_PASS" in etag)
 
             # Tầng 3: Incubator cho các Tag mới phát triển (744, 746)
-            # Cắt giảm quy mô vốn vào lệnh (0.40x raw_proposed, trần 0.45x) để bảo vệ vốn tuyệt đối
             is_incubator = ("744" in etag or "746" in etag) and not is_tier1
 
             if is_incubator:
                 base_stake = 0.40 * raw_proposed
                 target_stake = base_stake * vol_mult * ai_mult
                 max_allowed_stake = 0.45 * raw_proposed
-            elif is_tier1 and open_shorts_count <= 1:
+            elif is_tier1 and open_shorts_count == 0:
+                base_stake = 1.22 * raw_proposed if open_trades_count <= 5 else 1.15 * raw_proposed
+                target_stake = base_stake * vol_mult * ai_mult
+            elif is_tier1 and open_shorts_count == 1:
                 base_stake = 1.15 * raw_proposed
                 target_stake = base_stake * vol_mult * ai_mult
             elif is_tier2:
-                base_stake = 1.00 * raw_proposed
+                base_stake = 1.05 * raw_proposed
                 target_stake = base_stake * vol_mult * ai_mult
 
             # Short Concurrent Double-Drawdown Guard:
             if open_shorts_count >= 2:
-                max_allowed_stake = 0.80 * raw_proposed
+                max_allowed_stake = 0.85 * raw_proposed
             elif open_shorts_count == 1:
-                max_allowed_stake = 1.00 * raw_proposed
+                max_allowed_stake = (1.10 * raw_proposed) if is_tier1 else (1.00 * raw_proposed)
             elif is_incubator:
                 max_allowed_stake = 0.45 * raw_proposed
+            elif is_tier1 and open_trades_count <= 5:
+                max_allowed_stake = 1.42 * raw_proposed
             elif is_tier1 and open_trades_count <= 6:
-                max_allowed_stake = 1.25 * raw_proposed
+                max_allowed_stake = 1.32 * raw_proposed
             elif is_tier2 and open_trades_count <= 6:
-                max_allowed_stake = 1.10 * raw_proposed
+                max_allowed_stake = 1.15 * raw_proposed
             else:
                 max_allowed_stake = 1.00 * raw_proposed
 
