@@ -45,8 +45,15 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
     ai_fallback_model_path: str = "user_data/models/nfix8_short_ai_v2.pkl"
 
     # Danh sách các tag custom Short bị loại bỏ:
-    # Ở v7.1, v9.0 & v10.0, loại bỏ các tag có kỳ vọng âm hoặc nhiễu cao (701 702 703 731, 703 706 731, 703 721 731, 744, 746)
+    # Ở v7.1, v9.0, v10.0 & v11.0, loại bỏ các tag có kỳ vọng âm hoặc nhiễu cao
     disabled_custom_short_tags: set = {"701 702 703 731", "703 706 731", "703 721 731", "744", "746"}
+
+    # Unified Tag Toggles (v11.0): Turn ON/OFF bất kỳ tag Long hoặc Short nào (hỗ trợ cả tag đơn và tag tổ hợp).
+    # Có thể ghi đè trực tiếp qua config JSON dưới key "tag_toggles" (ở root hoặc trong "nfi_parameters").
+    tag_toggles: dict = {
+        "120": False,  # 0% WR trong 240d baseline (RENDER -25.96 USDT)
+        "4": False,    # 50% WR, kỳ vọng âm nặng (-178.08 USDT trong 240d baseline)
+    }
 
     # Toggles cho từng điều kiện Short custom (tương tự short_entry_signal_params của Nostalgia gốc)
     custom_short_signal_params: dict = {
@@ -75,12 +82,12 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
 
     def version(self) -> str:
         base_ver = super().version()
-        return f"{base_ver} + AI_Gatekeeper_v10.0_Alpha_Prime"
+        return f"{base_ver} + AI_Gatekeeper_v11.0_Winrate_Shield"
 
     def __init__(self, config: dict) -> None:
         # Tạm thời ẩn các key custom khỏi nfi_parameters để Nostalgia gốc không log warning không cần thiết
         nfi_params = config.get("nfi_parameters", {}) if isinstance(config, dict) else {}
-        custom_keys = ["disabled_custom_short_tags", "custom_short_tag_params", "custom_short_signal_params"]
+        custom_keys = ["disabled_custom_short_tags", "custom_short_tag_params", "custom_short_signal_params", "tag_toggles", "disabled_tags"]
         popped = {}
         if isinstance(nfi_params, dict):
             for k in custom_keys:
@@ -252,6 +259,33 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
             )
         else:
             log.info("No custom short tags disabled via config. All custom short tags active (Rollback mode).")
+
+        # 3. Unified Tag Toggles (v11.0): Hỗ trợ bật/tắt mọi tag Long/Short (đơn hoặc tổ hợp)
+        merged_toggles = dict(getattr(self, "tag_toggles", {}) or {})
+        for src in (nfi_params, cfg):
+            if isinstance(src.get("tag_toggles"), dict):
+                merged_toggles.update(src["tag_toggles"])
+            if isinstance(src.get("disabled_tags"), (list, set)):
+                for t in src["disabled_tags"]:
+                    merged_toggles[str(t)] = False
+
+        self.tag_toggles = {str(k).strip(): bool(v) for k, v in merged_toggles.items()}
+        self.disabled_single_tags = set()
+        self.disabled_combo_tags = set()
+        for tag_key, enabled in self.tag_toggles.items():
+            if not enabled:
+                tokens = tag_key.split()
+                if len(tokens) == 1:
+                    self.disabled_single_tags.add(tokens[0])
+                elif len(tokens) > 1:
+                    self.disabled_combo_tags.add(" ".join(sorted(tokens)))
+
+        if self.disabled_single_tags or self.disabled_combo_tags:
+            log.info(
+                "Unified Tag Toggles active | disabled_single=%s | disabled_combo=%s",
+                sorted(self.disabled_single_tags),
+                sorted(self.disabled_combo_tags),
+            )
 
     def _load_ai_model(self) -> None:
         """Nạp model học máy từ đĩa (Pickle / Joblib / ONNX)."""
@@ -633,7 +667,13 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
                 if np.any(is_562) and "ai_feat_pair_dist_ema50_1h" in df.columns and "ai_feat_btc_dist_ema200_4h" in df.columns:
                     dist_e50_1h = df["ai_feat_pair_dist_ema50_1h"].to_numpy()
                     btc_d4 = df["ai_feat_btc_dist_ema200_4h"].to_numpy()
-                    late_squeeze = is_562 & (dist_e50_1h <= -0.044) & (btc_d4 >= -0.020)
+                    btc_rsi_1h = df["ai_feat_btc_rsi_1h"].to_numpy() if "ai_feat_btc_rsi_1h" in df.columns else np.full(len(df), 50.0)
+                    rsi_14 = df["ai_feat_rsi_14"].to_numpy() if "ai_feat_rsi_14" in df.columns else np.full(len(df), 50.0)
+                    late_squeeze = is_562 & (
+                        ((dist_e50_1h <= -0.044) & (btc_d4 >= -0.020))
+                        | (btc_rsi_1h > 64.0)
+                        | ((dist_e50_1h > 0.08) & (rsi_14 > 75.0))
+                    )
                     if np.any(late_squeeze):
                         df.loc[late_squeeze, "enter_short"] = 0
                         df.loc[late_squeeze, "enter_tag"] = ""
@@ -725,7 +765,9 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
                     cand_idxs_valid = np.where(custom_mask)[0]
                     regime_th = self._compute_market_regime_thresholds(df, cand_idxs_valid)
                     req_thresholds = np.full(len(df), self.ai_confidence_threshold, dtype=np.float32)
-                    req_thresholds[cand_idxs_valid] = regime_th
+                    c_tags_cand = df["enter_tag_custom"].fillna("").astype(str).to_numpy()[cand_idxs_valid]
+                    is_702_combo = np.array(["702" in t and "703" in t and "731" in t for t in c_tags_cand])
+                    req_thresholds[cand_idxs_valid] = np.where(is_702_combo, regime_th + 0.04, regime_th)
 
                     approved_custom = custom_mask & (ai_probs >= req_thresholds)
                     vetoed_custom = custom_mask & (ai_probs < req_thresholds)
@@ -784,6 +826,8 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
             )
             df.loc[:, "enter_tag"] = merged_tags
 
+        df = self._apply_tag_toggles(df)
+
         ohlcv_cols = {"date", "open", "high", "low", "close", "volume"}
         f_cols = [c for c in df.select_dtypes(include=["float64"]).columns if c not in ohlcv_cols]
         if f_cols:
@@ -800,6 +844,63 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
                 else:
                     df[c] = df[c].astype(np.int32)
 
+        return df
+
+    def _is_tag_disabled(self, tag_str: Optional[str]) -> bool:
+        """Kiểm tra một chuỗi enter_tag có bị tắt hoàn toàn bởi tag_toggles hay không."""
+        single_dis = getattr(self, "disabled_single_tags", set())
+        combo_dis = getattr(self, "disabled_combo_tags", set())
+        if not single_dis and not combo_dis:
+            return False
+        raw = str(tag_str or "").strip()
+        if not raw:
+            return False
+        norm_clean = " ".join(sorted(t for t in raw.replace("_AI_PASS", "").split() if t))
+        if norm_clean in combo_dis:
+            return True
+        tokens = [t for t in raw.split() if t]
+        kept = [t for t in tokens if t.replace("_AI_PASS", "") not in single_dis]
+        return len(kept) == 0
+
+    def _apply_tag_toggles(self, df: DataFrame) -> DataFrame:
+        """Lọc bật/tắt bất kỳ tag Long hoặc Short nào theo cấu hình tag_toggles."""
+        single_dis = getattr(self, "disabled_single_tags", set())
+        combo_dis = getattr(self, "disabled_combo_tags", set())
+        if (not single_dis and not combo_dis) or "enter_tag" not in df.columns:
+            return df
+
+        for col in ("enter_long", "enter_short"):
+            if col not in df.columns:
+                continue
+            active_idxs = np.where((df[col] == 1).to_numpy())[0]
+            if len(active_idxs) == 0:
+                continue
+            tags_arr = df["enter_tag"].fillna("").astype(str).to_numpy().copy()
+            col_arr = df[col].to_numpy().copy()
+            changed = False
+            for idx in active_idxs:
+                raw = tags_arr[idx].strip()
+                if not raw:
+                    continue
+                norm_clean = " ".join(sorted(t for t in raw.replace("_AI_PASS", "").split() if t))
+                if norm_clean in combo_dis:
+                    col_arr[idx] = 0
+                    tags_arr[idx] = ""
+                    changed = True
+                    continue
+                if single_dis:
+                    tokens = raw.split()
+                    kept = [t for t in tokens if t.replace("_AI_PASS", "") not in single_dis]
+                    if len(kept) != len(tokens):
+                        changed = True
+                        if len(kept) == 0:
+                            col_arr[idx] = 0
+                            tags_arr[idx] = ""
+                        else:
+                            tags_arr[idx] = " ".join(kept) + (" " if tags_arr[idx].endswith(" ") else "")
+            if changed:
+                df.loc[:, col] = col_arr
+                df.loc[:, "enter_tag"] = tags_arr
         return df
 
     def custom_exit(
@@ -960,7 +1061,6 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
                             return f"exit_ai_reversal_harvest ( {orig_tag})"
 
             # 3. AI TIME-DECAY & DRIFT SOFT EXIT:
-            # Thoát sớm các lệnh short trôi dạt sau 12h nếu vẫn đang âm <= -4.0% ROE (chặn ETH, SHIB, COIN):
             if trade_duration_hours >= 12.0 and current_profit <= -0.040:
                 return f"exit_ai_drift_decay ( {orig_tag})"
 
@@ -971,9 +1071,6 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
         # =========================================================================
         # 2.5. AI AGED BREAKEVEN LOCK CHO TAG 562
         # =========================================================================
-        # Nếu lệnh Tag 562 đã từng đạt MFE >= +8.0% ROE (+1.6% spot 5x) nhưng sau >= 36h
-        # không thể tiếp tục mở rộng đà rơi và lợi nhuận tụt về <= 0.0% ROE:
-        # Khóa hòa vốn ngay để giải phóng vốn và ngăn chặn RENDER (-32.5$) trôi dạt suốt 4 ngày!
         if trade.is_short and "562" in orig_tag:
             min_r = trade.min_rate if trade.min_rate is not None else open_rate
             mfe_lev = (open_rate - min_r) / open_rate * leverage
@@ -1161,7 +1258,11 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
         if not base_confirm:
             return False
 
-        # Asymmetric Pump & Dump Circuit Breaker cho vị thế Long
+        if self._is_tag_disabled(entry_tag):
+            log.info("Unified Tag Toggle blocked %s entry for %s (tag=%s)", side, pair, entry_tag)
+            return False
+
+        # Asymmetric Pump & Dump Circuit Breaker & Tag Quality Filter cho vị thế Long
         if side in ("long", "buy") and hasattr(self, "dp") and self.dp is not None:
             try:
                 df_pair, _ = self.dp.get_analyzed_dataframe(pair, self.timeframe)
@@ -1191,6 +1292,23 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
                                 pair, current_time, vol_ratio, drop_4h * 100.0,
                             )
                             return False
+
+                        # Long Tag Quality Guard (v11.0): Chặn các tag nhạy cảm (3, 4, 6, 45) khi giá gãy quá sâu dưới EMA200 1h & BTC yếu
+                        etag_tokens = set(str(entry_tag or "").split())
+                        sensitive_long_tags = {"3", "4", "6", "45"}
+                        elite_safe_tags = {"1", "2", "42", "43", "44", "62", "64", "65", "141", "142"}
+                        if (etag_tokens & sensitive_long_tags) and not (etag_tokens & elite_safe_tags):
+                            d_e200 = last_row.get("ai_feat_pair_dist_ema200_1h", None)
+                            if d_e200 is None:
+                                e200 = last_row.get("EMA_200_1h", None) or last_row.get("ema_200_1h", None)
+                                d_e200 = ((last_close - float(e200)) / float(e200)) if (e200 and float(e200) > 0) else 0.0
+                            btc_rsi_1h = last_row.get("ai_feat_btc_rsi_1h", 50.0)
+                            if float(d_e200) < -0.08 and float(btc_rsi_1h) < 42.0:
+                                log.warning(
+                                    "Long Tag Quality Guard: Blocked %s (%s) | dist_e200_1h=%.2f%% < -8%% | btc_rsi_1h=%.1f < 42",
+                                    pair, entry_tag, float(d_e200) * 100.0, float(btc_rsi_1h),
+                                )
+                                return False
             except Exception as e:
                 log.warning("Circuit Breaker evaluation error for %s: %s", pair, e)
 
@@ -1307,7 +1425,7 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
 
         if side in ("long", "buy"):
             if is_elite_long:
-                long_tier_mult = 1.22 if open_trades_count <= 4 else 1.15
+                long_tier_mult = 1.26 if open_trades_count <= 4 else 1.18
             elif is_risky_long:
                 long_tier_mult = 0.70
 
@@ -1323,11 +1441,11 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
         # Dynamic Margin Buffer & Disciplined Sizing Belts (Khống chế chặt chẽ quanh raw_proposed):
         if is_elite_long:
             if open_trades_count <= 4:
-                max_allowed_stake = 1.45 * raw_proposed
+                max_allowed_stake = 1.50 * raw_proposed
             elif open_trades_count <= 6:
-                max_allowed_stake = 1.35 * raw_proposed
+                max_allowed_stake = 1.38 * raw_proposed
             else:
-                max_allowed_stake = 1.15 * raw_proposed
+                max_allowed_stake = 1.18 * raw_proposed
         elif is_risky_long:
             max_allowed_stake = (0.85 * raw_proposed) if open_trades_count <= 6 else (0.75 * raw_proposed)
         else:
@@ -1353,10 +1471,10 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
                 target_stake = base_stake * vol_mult * ai_mult
                 max_allowed_stake = 0.45 * raw_proposed
             elif is_tier1 and open_shorts_count == 0:
-                base_stake = 1.22 * raw_proposed if open_trades_count <= 5 else 1.15 * raw_proposed
+                base_stake = 1.26 * raw_proposed if open_trades_count <= 5 else 1.18 * raw_proposed
                 target_stake = base_stake * vol_mult * ai_mult
             elif is_tier1 and open_shorts_count == 1:
-                base_stake = 1.15 * raw_proposed
+                base_stake = 1.18 * raw_proposed
                 target_stake = base_stake * vol_mult * ai_mult
             elif is_tier2:
                 base_stake = 1.05 * raw_proposed
@@ -1366,11 +1484,11 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
             if open_shorts_count >= 2:
                 max_allowed_stake = 0.85 * raw_proposed
             elif open_shorts_count == 1:
-                max_allowed_stake = (1.10 * raw_proposed) if is_tier1 else (1.00 * raw_proposed)
+                max_allowed_stake = (1.12 * raw_proposed) if is_tier1 else (1.00 * raw_proposed)
             elif is_incubator:
                 max_allowed_stake = 0.45 * raw_proposed
             elif is_tier1 and open_trades_count <= 5:
-                max_allowed_stake = 1.42 * raw_proposed
+                max_allowed_stake = 1.46 * raw_proposed
             elif is_tier1 and open_trades_count <= 6:
                 max_allowed_stake = 1.32 * raw_proposed
             elif is_tier2 and open_trades_count <= 6:
