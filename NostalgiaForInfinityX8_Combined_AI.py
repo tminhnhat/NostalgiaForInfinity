@@ -46,7 +46,10 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
 
     # Danh sách các tag custom Short bị loại bỏ:
     # Ở v7.1, v9.0, v10.0 & v11.0, loại bỏ các tag có kỳ vọng âm hoặc nhiễu cao
-    disabled_custom_short_tags: set = {"701 702 703 731", "703 706 731", "703 721 731", "744", "746"}
+    disabled_custom_short_tags: set = {
+        "701 702 703 731", "703 706 731", "703 721 731", "744", "746",
+        "724 745", "721 742", "701 703 705 706 731",
+    }
 
     # Unified Tag Toggles (v11.0): Turn ON/OFF bất kỳ tag Long hoặc Short nào (hỗ trợ cả tag đơn và tag tổ hợp).
     # Có thể ghi đè trực tiếp qua config JSON dưới key "tag_toggles" (ở root hoặc trong "nfi_parameters").
@@ -78,11 +81,13 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
         "custom_short_744_enable": False,
         "custom_short_745_enable": True,
         "custom_short_746_enable": False,
+        "custom_short_747_enable": True,
+        "custom_short_748_enable": True,
     }
 
     def version(self) -> str:
         base_ver = super().version()
-        return f"{base_ver} + AI_Gatekeeper_v11.0_Winrate_Shield"
+        return f"{base_ver} + AI_Gatekeeper_v12.1_Short_Alpha"
 
     def __init__(self, config: dict) -> None:
         # Tạm thời ẩn các key custom khỏi nfi_parameters để Nostalgia gốc không log warning không cần thiết
@@ -1018,7 +1023,7 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
             # Cắt giảm rủi ro sớm khi vị thế Short âm vượt lên trên 1H EMA 50.
             # Đối với Tag 741 (bắt đỉnh SFP), 744, 745, 746: Thoát ngay tại ngưỡng -12.5% ROE (tiết kiệm ~40% mức lỗ mỗi lệnh)
             # Đối với các tag Short khác: Thoát tại -17.5% ROE.
-            cut_threshold = -0.125 if ("741" in orig_tag or "744" in orig_tag or "745" in orig_tag or "746" in orig_tag) else -0.175
+            cut_threshold = -0.125 if ("741" in orig_tag or "744" in orig_tag or "745" in orig_tag or "746" in orig_tag or "747" in orig_tag) else -0.175
             if current_profit <= cut_threshold and hasattr(self, "dp") and self.dp is not None:
                 df_pair, _ = self.dp.get_analyzed_dataframe(pair, self.timeframe)
                 if len(df_pair) > 0:
@@ -1455,12 +1460,12 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
         if side in ("short", "sell"):
             etag = str(entry_tag or "")
 
-            # Tầng 1: Elite High-WR Short Tags (Track-record xuất sắc v7.3 & v8.2: 562, 542, 706, 724, 721, 741-743, tổ hợp 702 703 731)
-            tier1_elite_tags = ("562", "542", "706", "724", "721", "711", "741", "742", "743", "702 703 731", "701 702 703 731", "701 703 706 731", "743 744", "702 703 705 731")
+            # Tầng 1: Elite High-WR Short Tags (Track-record xuất sắc: 562, 542, 706, 724, 721, 741-743, 748, tổ hợp 702 703 731)
+            tier1_elite_tags = ("562", "542", "706", "724", "721", "711", "741", "742", "743", "748", "702 703 731", "701 702 703 731", "701 703 706 731", "743 744", "702 703 705 731")
             is_tier1 = any(t in etag.split() or t in etag for t in tier1_elite_tags)
 
             # Tầng 2: Standard AI Short Tags
-            tier2_ai_tags = ("703 722 731", "701 703 731", "724 731", "745")
+            tier2_ai_tags = ("703 722 731", "701 703 731", "724 731", "745", "747", "748")
             is_tier2 = any(t in etag for t in tier2_ai_tags) and ("_AI_PASS" in etag or "AI_PASS" in etag)
 
             # Tầng 3: Incubator cho các Tag mới phát triển (744, 746)
@@ -1471,7 +1476,7 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
                 target_stake = base_stake * vol_mult * ai_mult
                 max_allowed_stake = 0.45 * raw_proposed
             elif is_tier1 and open_shorts_count == 0:
-                base_stake = 1.26 * raw_proposed if open_trades_count <= 5 else 1.18 * raw_proposed
+                base_stake = 1.34 * raw_proposed if open_trades_count <= 5 else 1.24 * raw_proposed
                 target_stake = base_stake * vol_mult * ai_mult
             elif is_tier1 and open_shorts_count == 1:
                 base_stake = 1.18 * raw_proposed
@@ -1488,7 +1493,7 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
             elif is_incubator:
                 max_allowed_stake = 0.45 * raw_proposed
             elif is_tier1 and open_trades_count <= 5:
-                max_allowed_stake = 1.46 * raw_proposed
+                max_allowed_stake = 1.52 * raw_proposed
             elif is_tier1 and open_trades_count <= 6:
                 max_allowed_stake = 1.32 * raw_proposed
             elif is_tier2 and open_trades_count <= 6:

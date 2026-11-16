@@ -77,6 +77,8 @@ class NostalgiaForInfinityX8_ShortSignals:
         self.enable_short_breaker_retest = True        # Tag 744 (Bearish Breaker Block S/R Flip Retest Failure)
         self.enable_short_order_block = True           # Tag 745 (Bearish Order Block & Supply Cluster Rejection)
         self.enable_short_pnd_exhaustion = True        # Tag 746 (PND Exhaustion Waterfall Short)
+        self.enable_short_overextended_pump = True     # Tag 747 (Overextended Pump / Upper-Band Exhaustion Short)
+        self.enable_short_1h_bear_pullback = True      # Tag 748 (1h Bearish Regime + 5m Pullback Rejection Short)
 
         # =========================================================================
         # Exit Thresholds chuyên biệt cho Short
@@ -94,7 +96,7 @@ class NostalgiaForInfinityX8_ShortSignals:
             "711", "712", "713", "714",
             "721", "722", "723", "724", "725",
             "731",
-            "741", "742", "743", "744", "745", "746",
+            "741", "742", "743", "744", "745", "746", "747", "748",
             "short_custom_breakdown",
             "short_custom_sfp",
             "short_custom_exhaustion",
@@ -732,6 +734,50 @@ class NostalgiaForInfinityX8_ShortSignals:
             & (~weekend_thin_liq)                         # Không vào thanh khoản mỏng cuối tuần
         )
 
+        # TAG 747: Overextended Pump / Upper-Band Exhaustion Short (Miễn macro_bearish_regime)
+        # Bắt nhịp đảo chiều khi altcoin bơm nóng vượt xa EMA 50/200, chạm BBU và xuất hiện nến râu trên xả mạnh.
+        btc_rsi_1h_arr = dataframe["BTC_RSI_14_1h"].to_numpy(copy=False) if "BTC_RSI_14_1h" in dataframe.columns else np.full(n_rows, 50.0)
+        cond_747 = (
+            (volume > 0)
+            & is_liquid_for_short
+            & (~weekend_thin_liq)
+            & (~monday_open_trap)
+            & (close > ema_200)
+            & (close > ema_50 * 1.022)
+            & (high >= bbu * 0.998)
+            & (rsi_14 >= 72.0)
+            & (close < open_px)
+            & (upper_wick_ratio >= 0.30)
+            & (lower_wick_ratio <= 0.25)
+            & (vol_spike_ratio >= 1.30) & (vol_spike_ratio <= 5.50)
+            & (macdhist < shift_macdhist)
+            & (~btc_bullish)
+            & (btc_rsi_1h_arr < 62.0)
+        )
+
+        # TAG 748: 1h Bearish Regime + 5m Pullback Rejection Short
+        # Cho phép bắt nhịp hồi chạm cản EMA21/50 khi khung 1h đã xác nhận downtrend, ngay cả khi 5m vừa hồi qua EMA200.
+        cond_748 = (
+            (volume > 0)
+            & is_liquid_for_short
+            & (~weekend_thin_liq)
+            & (~monday_open_trap)
+            & (~close_above_ema200_1h)
+            & (~close_above_ema50_1h)
+            & (dist_ema50_1h <= -0.004)
+            & (high >= ema_21 * 0.998)
+            & (close < ema_9)
+            & (close < open_px)
+            & (upper_wick_ratio >= 0.25)
+            & (lower_wick_ratio <= 0.25)
+            & (body_ratio >= 0.20)
+            & (rsi_14 >= 34.0) & (rsi_14 <= 66.0)
+            & (~rsi_1h_oversold)
+            & (macdhist < shift_macdhist)
+            & (vol_spike_ratio >= 1.15) & (vol_spike_ratio <= 4.50)
+            & (~btc_bullish)
+        )
+
         # Setup 1: Exhaustion Confluence - ĐÃ TẮT ĐỂ TRIỆT TIÊU 100% NHIỄU BẮT ĐỈNH TRONG SÓNG TĂNG
         trigger_exhaustion = np.zeros(n_rows, dtype=bool)
 
@@ -792,6 +838,15 @@ class NostalgiaForInfinityX8_ShortSignals:
             & is_liquid_for_short
         ) if getattr(self, "enable_short_pnd_exhaustion", True) else np.zeros(n_rows, dtype=bool)
 
+        # Setup 16 & 17: Overextended Pump (747) & 1h Bearish Pullback Rejection (748)
+        # Bắt buộc confluence để loại bỏ hoàn toàn nhiễu bắn đơn lẻ
+        trigger_747 = (
+            cond_747 & cond_711 & cond_712 & cond_713
+        ) if getattr(self, "enable_short_overextended_pump", True) else np.zeros(n_rows, dtype=bool)
+        trigger_748 = (
+            cond_748 & cond_731 & (cond_703 | cond_724 | cond_721) & (~cond_742)
+        ) if getattr(self, "enable_short_1h_bear_pullback", True) else np.zeros(n_rows, dtype=bool)
+
         # BỘ LỌC VĨ MÔ QUY TẮC VÀNG (v8.0): BẮT BUỘC DOWNTREND KHUNG LỚN & KHÔNG BÁN ĐÁY QUÁ BÁN & THANH KHOẢN AN TOÀN
         macro_bearish_regime = (
             (close < ema_200)
@@ -804,22 +859,25 @@ class NostalgiaForInfinityX8_ShortSignals:
 
         # TỔNG HỢP ĐIỀU KIỆN ĐỦ ĐỂ VÀO LỆNH (ĐÃ LỌC SẠCH NHIỄU)
         qualified_entry = (
-            trigger_breakdown
-            | trigger_rejection
-            | trigger_scalp
-            | trigger_ema50_reject
-            | trigger_bb_squeeze
-            | trigger_bear_div
-            | trigger_macro_breakdown
-            | trigger_bb_rejection
-            | trigger_741
-            | trigger_742
-            | trigger_743
-            | trigger_744
-            | trigger_745
-            | trigger_746
-            | trigger_exhaustion
-        ) & macro_bearish_regime
+            (
+                trigger_breakdown
+                | trigger_rejection
+                | trigger_scalp
+                | trigger_ema50_reject
+                | trigger_bb_squeeze
+                | trigger_bear_div
+                | trigger_macro_breakdown
+                | trigger_bb_rejection
+                | trigger_741
+                | trigger_742
+                | trigger_743
+                | trigger_744
+                | trigger_745
+                | trigger_746
+                | trigger_exhaustion
+            )
+            & macro_bearish_regime
+        ) | trigger_747 | trigger_748
 
         # Gán nhãn các tag cho những cây nến ĐẠT TIÊU CHUẨN CONFLUENCE
         idxs = np.where(qualified_entry)[0]
@@ -846,6 +904,8 @@ class NostalgiaForInfinityX8_ShortSignals:
                 (cond_744, "744"),
                 (cond_745, "745"),
                 (cond_746, "746"),
+                (cond_747, "747"),
+                (cond_748, "748"),
             ]
             for sig_mask, tag in all_signals:
                 active_idxs = np.intersect1d(idxs, np.where(sig_mask)[0])
