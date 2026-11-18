@@ -87,7 +87,7 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
 
     def version(self) -> str:
         base_ver = super().version()
-        return f"{base_ver} + AI_Gatekeeper_v12.1_Short_Alpha"
+        return f"{base_ver} + AI_Gatekeeper_v13.4_Short_Recovery"
 
     def __init__(self, config: dict) -> None:
         # Tạm thời ẩn các key custom khỏi nfi_parameters để Nostalgia gốc không log warning không cần thiết
@@ -668,16 +668,21 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
             short_mask = (df["enter_short"] == 1).to_numpy()
             if np.any(short_mask):
                 tags_raw = df["enter_tag"].fillna("").astype(str).to_numpy()
-                is_562 = np.array([("562" in t.split() or "542" in t.split()) for t in tags_raw]) & short_mask
+                is_562 = np.array([("562" in t.split()) for t in tags_raw]) & short_mask
                 if np.any(is_562) and "ai_feat_pair_dist_ema50_1h" in df.columns and "ai_feat_btc_dist_ema200_4h" in df.columns:
                     dist_e50_1h = df["ai_feat_pair_dist_ema50_1h"].to_numpy()
                     btc_d4 = df["ai_feat_btc_dist_ema200_4h"].to_numpy()
                     btc_rsi_1h = df["ai_feat_btc_rsi_1h"].to_numpy() if "ai_feat_btc_rsi_1h" in df.columns else np.full(len(df), 50.0)
+                    pair_rsi_1h = df["ai_feat_pair_rsi_1h"].to_numpy() if "ai_feat_pair_rsi_1h" in df.columns else np.full(len(df), 50.0)
                     rsi_14 = df["ai_feat_rsi_14"].to_numpy() if "ai_feat_rsi_14" in df.columns else np.full(len(df), 50.0)
+                    atr_norm = df["ai_feat_atr_norm"].to_numpy() if "ai_feat_atr_norm" in df.columns else np.full(len(df), 0.01)
                     late_squeeze = is_562 & (
                         ((dist_e50_1h <= -0.044) & (btc_d4 >= -0.020))
-                        | (btc_rsi_1h > 64.0)
-                        | ((dist_e50_1h > 0.08) & (rsi_14 > 75.0))
+                        | (btc_rsi_1h > 62.0)
+                        | (pair_rsi_1h >= 58.0)
+                        | (dist_e50_1h > 0.05)
+                        | (rsi_14 < 30.0)
+                        | (atr_norm > 0.025)
                     )
                     if np.any(late_squeeze):
                         df.loc[late_squeeze, "enter_short"] = 0
@@ -759,6 +764,23 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
                             custom_mask = (df["enter_short_custom"] == 1).to_numpy()
 
 
+                    # 3.0.4. Dynamic Confluence & 1h Momentum Filter cho các tổ hợp Short nhạy cảm
+                    if np.any(custom_mask) and "ai_feat_btc_rsi_1h" in df.columns and "ai_feat_pair_rsi_1h" in df.columns:
+                        c_tags_all = df["enter_tag_custom"].fillna("").astype(str).to_numpy()
+                        btc_r1h = df["ai_feat_btc_rsi_1h"].to_numpy()
+                        pair_r1h = df["ai_feat_pair_rsi_1h"].to_numpy()
+                        sens_mask = np.zeros(len(df), dtype=bool)
+                        for idx in np.where(custom_mask)[0]:
+                            toks = set(c_tags_all[idx].split())
+                            is_weak_745_748 = {"745", "748"}.issubset(toks) and not (toks & {"721", "703"})
+                            if (toks & {"701", "705", "706"}) or is_weak_745_748 or (toks == {"721", "731"}):
+                                sens_mask[idx] = True
+                        invalid_sens = sens_mask & ((btc_r1h > 48.0) | (pair_r1h > 48.0))
+                        if np.any(invalid_sens):
+                            df.loc[invalid_sens, "enter_short_custom"] = 0
+                            df.loc[invalid_sens, "enter_tag_custom"] = ""
+                            custom_mask = (df["enter_short_custom"] == 1).to_numpy()
+
                 if np.any(custom_mask):
                     # Tính toán xác suất AI CHỈ trên các cây nến có tín hiệu custom còn lại
                     ai_probs = self._compute_ai_probability(df, custom_mask)
@@ -771,8 +793,15 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
                     regime_th = self._compute_market_regime_thresholds(df, cand_idxs_valid)
                     req_thresholds = np.full(len(df), self.ai_confidence_threshold, dtype=np.float32)
                     c_tags_cand = df["enter_tag_custom"].fillna("").astype(str).to_numpy()[cand_idxs_valid]
-                    is_702_combo = np.array(["702" in t and "703" in t and "731" in t for t in c_tags_cand])
-                    req_thresholds[cand_idxs_valid] = np.where(is_702_combo, regime_th + 0.04, regime_th)
+                    boost = np.zeros(len(cand_idxs_valid), dtype=np.float32)
+                    for k, t_str in enumerate(c_tags_cand):
+                        toks = set(t_str.split())
+                        is_weak_745_748 = {"745", "748"}.issubset(toks) and not (toks & {"721", "703"})
+                        if (toks & {"701", "705", "706"}) or is_weak_745_748 or (toks == {"721", "731"}):
+                            boost[k] = 0.06
+                        elif "747" in toks or {"702", "703", "731"}.issubset(toks):
+                            boost[k] = 0.04
+                    req_thresholds[cand_idxs_valid] = regime_th + boost
 
                     approved_custom = custom_mask & (ai_probs >= req_thresholds)
                     vetoed_custom = custom_mask & (ai_probs < req_thresholds)
@@ -1039,7 +1068,7 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
                             if current_rate > float(e200_1h):
                                 return f"exit_ai_early_macro_cut ( {orig_tag})"
 
-            # 1. AI Trailing Profit Lock (v10.0 - Nới nhẹ để ăn trọn sóng Short):
+            # 1. AI Trailing Profit Lock (v13.2 - Giữ runner cho Short):
             # Tầng 1: Đạt MFE >= +7.5% ROE nhưng tụt về <= +2.8% ROE (tối thiểu +1.2% ROE):
             if mfe_lev >= 0.075 and current_profit <= 0.028 and current_profit >= 0.012:
                 return f"exit_ai_profit_lock ( {orig_tag})"
@@ -1074,25 +1103,36 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
                 return f"exit_ai_drift_decay ( {orig_tag})"
 
         # =========================================================================
-        # 2.5. AI AGED BREAKEVEN LOCK CHO TAG 562
+        # 2.5. AI AGED BREAKEVEN LOCK CHO TAG 562 & 542
         # =========================================================================
-        if trade.is_short and "562" in orig_tag:
+        if trade.is_short and ("562" in orig_tag or "542" in orig_tag):
             min_r = trade.min_rate if trade.min_rate is not None else open_rate
             mfe_lev = (open_rate - min_r) / open_rate * leverage
             trade_duration_hours = (current_time - trade.open_date_utc).total_seconds() / 3600.0
-            if trade_duration_hours >= 36.0 and mfe_lev >= 0.080 and current_profit <= 0.000:
+            if trade_duration_hours >= 24.0 and mfe_lev >= 0.050 and 0.000 <= current_profit <= 0.005:
                 return f"exit_ai_562_aged_breakeven ( {orig_tag})"
 
         # =========================================================================
-        # 3. STAGNANT CAPITAL ROTATION GUARD (v9.0)
+        # 3. STAGNANT CAPITAL ROTATION & MAX DURATION GUARD (v13.3)
         # =========================================================================
-        # Khi số vị thế đang mở >= 4 và một vị thế đã trôi dạt quá 72h mà không bứt phá (PnL nằm trong vùng -3.0% đến +1.5% ROE):
-        # Chủ động đóng lệnh hòa vốn / lỗ nhẹ để giải phóng margin cho các cơ hội mới.
         trade_dur_hours = (current_time - trade.open_date_utc).total_seconds() / 3600.0
-        if trade_dur_hours >= 72.0 and -0.03 <= current_profit <= 0.015:
-            open_count = len(Trade.get_open_trades()) if Trade else 0
-            if open_count >= 4:
-                return f"exit_stagnant_capital_rotation ( {orig_tag})"
+        if trade.is_short:
+            if trade_dur_hours >= 72.0:
+                return f"exit_short_max_duration_72h ( {orig_tag})"
+        else:
+            if trade_dur_hours >= 120.0 and -0.02 <= current_profit <= 0.02:
+                open_count = len(Trade.get_open_trades()) if Trade else 0
+                if open_count >= 5:
+                    return f"exit_stagnant_capital_rotation ( {orig_tag})"
+            if trade_dur_hours >= 96.0:
+                try:
+                    real_profit = float(trade.calc_profit_ratio(current_rate))
+                except Exception:
+                    real_profit = current_profit
+                if real_profit >= 0.030:
+                    return f"exit_long_time_tp_96h ( {orig_tag})"
+            if trade_dur_hours >= 144.0:
+                return f"exit_long_max_duration_144h ( {orig_tag})"
 
         # Chuyển tiếp vào pipeline custom_exit của Combined & Nostalgia gốc
         if orig_tag and "_AI_PASS" in orig_tag:
