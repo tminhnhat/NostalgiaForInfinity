@@ -737,6 +737,11 @@ class NostalgiaForInfinityX8_ShortSignals:
         # TAG 747: Overextended Pump / Upper-Band Exhaustion Short (Miễn macro_bearish_regime)
         # Bắt nhịp đảo chiều khi altcoin bơm nóng vượt xa EMA 50/200, chạm BBU và xuất hiện nến râu trên xả mạnh.
         btc_rsi_1h_arr = dataframe["BTC_RSI_14_1h"].to_numpy(copy=False) if "BTC_RSI_14_1h" in dataframe.columns else np.full(n_rows, 50.0)
+        dist_ema200_1h_arr = (
+            (close - ema_200_1h) / np.maximum(ema_200_1h, 1e-8)
+            if "EMA_200_1h" in dataframe.columns
+            else np.zeros(n_rows)
+        )
         cond_747 = (
             (volume > 0)
             & is_liquid_for_short
@@ -748,9 +753,10 @@ class NostalgiaForInfinityX8_ShortSignals:
             & (high >= bbu * 0.998)
             & (rsi_14 >= 73.0)
             & (close < open_px)
-            & (upper_wick_ratio >= 0.32)
+            & (upper_wick_ratio >= 0.50)
             & (lower_wick_ratio <= 0.25)
             & (vol_spike_ratio >= 1.30) & (vol_spike_ratio <= 5.50)
+            & (~((dist_ema200_1h_arr > 0.05) & (vol_spike_ratio >= 3.00)))
             & (macdhist < shift_macdhist)
             & (~btc_bullish)
             & (btc_rsi_1h_arr < 60.0)

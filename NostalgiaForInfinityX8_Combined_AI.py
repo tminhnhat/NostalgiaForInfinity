@@ -87,7 +87,7 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
 
     def version(self) -> str:
         base_ver = super().version()
-        return f"{base_ver} + AI_Gatekeeper_v13.4_Short_Recovery"
+        return f"{base_ver} + AI_Gatekeeper_v13.5_Short_Precision"
 
     def __init__(self, config: dict) -> None:
         # Tạm thời ẩn các key custom khỏi nfi_parameters để Nostalgia gốc không log warning không cần thiết
@@ -381,7 +381,11 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
         else:
             df["ai_feat_dist_ema200_1h"] = 0.0
 
-        # 6. Động lượng RSI và Volatility
+        # 6. Động lượng RSI và Volatility (giữ nguyên tên cột tương thích model v3.0, đồng thời lưu real_rsi_14 cho rule filters)
+        if "RSI_14" in df.columns:
+            df["real_rsi_14"] = df["RSI_14"].to_numpy(copy=False).astype(np.float32)
+        else:
+            df["real_rsi_14"] = ta.RSI(close_p, timeperiod=14).astype(np.float32)
         if "rsi_14" in df.columns:
             df["ai_feat_rsi_14"] = df["rsi_14"].to_numpy(copy=False).astype(np.float32)
         else:
@@ -425,16 +429,17 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
         df["ai_feat_pair_rsi_1h"] = rsi_1h.to_numpy(copy=False).astype(np.float32) if rsi_1h is not None else np.full(len(df), 50.0, dtype=np.float32)
 
         # 12. Đặc trưng Vĩ mô BTC Đa Khung Thời Gian (1h & 4h)
+        # Giữ nguyên ai_feat_btc_* tương thích model v3.0; lưu real_btc_rsi_1h riêng cho các rule lọc 562 & 702/703/731.
         btc_rsi_1h = df["btc_rsi_14_1h"] if "btc_rsi_14_1h" in df.columns else (df["btc_rsi_1h"] if "btc_rsi_1h" in df.columns else None)
         df["ai_feat_btc_rsi_1h"] = btc_rsi_1h.to_numpy(copy=False).astype(np.float32) if btc_rsi_1h is not None else np.full(len(df), 50.0, dtype=np.float32)
-        df["ai_feat_btc_rsi"] = df["ai_feat_btc_rsi_1h"] # Tương thích v1
+        df["ai_feat_btc_rsi"] = df["ai_feat_btc_rsi_1h"]
 
         btc_c_1h = df["btc_close_1h"] if "btc_close_1h" in df.columns else None
         btc_e200_1h = df["btc_EMA_200_1h"] if "btc_EMA_200_1h" in df.columns else (df["btc_ema_200_1h"] if "btc_ema_200_1h" in df.columns else None)
         if btc_c_1h is not None and btc_e200_1h is not None:
             btc_d_1h = ((btc_c_1h - btc_e200_1h) / np.maximum(btc_e200_1h, 1e-8)).astype(np.float32)
             df["ai_feat_btc_dist_ema200_1h"] = btc_d_1h
-            df["ai_feat_btc_dist_ema200"] = btc_d_1h # Tương thích v1
+            df["ai_feat_btc_dist_ema200"] = btc_d_1h
         else:
             df["ai_feat_btc_dist_ema200_1h"] = 0.0
             df["ai_feat_btc_dist_ema200"] = 0.0
@@ -445,6 +450,27 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
             df["ai_feat_btc_dist_ema200_4h"] = ((btc_c_4h - btc_e200_4h) / np.maximum(btc_e200_4h, 1e-8)).astype(np.float32)
         else:
             df["ai_feat_btc_dist_ema200_4h"] = 0.0
+
+        df["real_btc_rsi_1h"] = np.full(len(df), 50.0, dtype=np.float32)
+        if hasattr(self, "dp") and self.dp is not None and "date" in df.columns:
+            try:
+                if not hasattr(self, "_btc_htf_feat_cache"):
+                    self._btc_htf_feat_cache = {}
+                btc_pair = "BTC/USDT:USDT" if (self.config.get("trading_mode", "futures") == "futures") else "BTC/USDT"
+                raw_b1 = self.dp.get_pair_dataframe(btc_pair, "1h")
+                if raw_b1 is not None and len(raw_b1) > 0:
+                    key1 = (len(raw_b1), str(raw_b1["date"].iloc[-1]))
+                    if self._btc_htf_feat_cache.get("k1") != key1:
+                        b1 = raw_b1[["date", "close"]].copy()
+                        b1["date"] = (pd.to_datetime(b1["date"], utc=True) + pd.Timedelta(hours=1)).dt.as_unit("ns")
+                        b1["_btc_rsi_1h"] = ta.RSI(b1["close"].to_numpy(dtype=float), timeperiod=14).astype(np.float32)
+                        self._btc_htf_feat_cache["k1"] = key1
+                        self._btc_htf_feat_cache["d1"] = b1[["date", "_btc_rsi_1h"]].sort_values("date")
+                    df_dt = pd.DataFrame({"date": pd.to_datetime(df["date"], utc=True).dt.as_unit("ns")})
+                    m1 = pd.merge_asof(df_dt, self._btc_htf_feat_cache["d1"], on="date", direction="backward")
+                    df["real_btc_rsi_1h"] = m1["_btc_rsi_1h"].fillna(50.0).to_numpy(dtype=np.float32)
+            except Exception as _e_btc:
+                log.debug("BTC 1h real_rsi cache skipped: %s", _e_btc)
 
         # 13. CÁC ĐẶC TRƯNG BỔ SUNG v5.0 (EXPANDED TECHNICAL UNIVERSE)
         # Candle Range Normalized
@@ -675,13 +701,17 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
                     btc_rsi_1h = df["ai_feat_btc_rsi_1h"].to_numpy() if "ai_feat_btc_rsi_1h" in df.columns else np.full(len(df), 50.0)
                     pair_rsi_1h = df["ai_feat_pair_rsi_1h"].to_numpy() if "ai_feat_pair_rsi_1h" in df.columns else np.full(len(df), 50.0)
                     rsi_14 = df["ai_feat_rsi_14"].to_numpy() if "ai_feat_rsi_14" in df.columns else np.full(len(df), 50.0)
+                    real_rsi_14 = df["real_rsi_14"].to_numpy() if "real_rsi_14" in df.columns else rsi_14
+                    real_btc_rsi_1h = df["real_btc_rsi_1h"].to_numpy() if "real_btc_rsi_1h" in df.columns else btc_rsi_1h
                     atr_norm = df["ai_feat_atr_norm"].to_numpy() if "ai_feat_atr_norm" in df.columns else np.full(len(df), 0.01)
+                    vol_spike = df["ai_feat_vol_spike"].to_numpy() if "ai_feat_vol_spike" in df.columns else np.full(len(df), 1.0)
                     late_squeeze = is_562 & (
                         ((dist_e50_1h <= -0.044) & (btc_d4 >= -0.020))
                         | (btc_rsi_1h > 62.0)
                         | (pair_rsi_1h >= 58.0)
                         | (dist_e50_1h > 0.05)
                         | (rsi_14 < 30.0)
+                        | ((real_rsi_14 < 27.0) & (vol_spike >= 4.5) & (real_btc_rsi_1h < 32.0))
                         | (atr_norm > 0.025)
                     )
                     if np.any(late_squeeze):
@@ -769,13 +799,17 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
                         c_tags_all = df["enter_tag_custom"].fillna("").astype(str).to_numpy()
                         btc_r1h = df["ai_feat_btc_rsi_1h"].to_numpy()
                         pair_r1h = df["ai_feat_pair_rsi_1h"].to_numpy()
+                        real_btc_r1h = df["real_btc_rsi_1h"].to_numpy() if "real_btc_rsi_1h" in df.columns else btc_r1h
                         sens_mask = np.zeros(len(df), dtype=bool)
+                        guard_702_mask = np.zeros(len(df), dtype=bool)
                         for idx in np.where(custom_mask)[0]:
                             toks = set(c_tags_all[idx].split())
                             is_weak_745_748 = {"745", "748"}.issubset(toks) and not (toks & {"721", "703"})
                             if (toks & {"701", "705", "706"}) or is_weak_745_748 or (toks == {"721", "731"}):
                                 sens_mask[idx] = True
-                        invalid_sens = sens_mask & ((btc_r1h > 48.0) | (pair_r1h > 48.0))
+                            if toks == {"702", "703", "731"}:
+                                guard_702_mask[idx] = True
+                        invalid_sens = (sens_mask & ((btc_r1h > 48.0) | (pair_r1h > 48.0))) | (guard_702_mask & (real_btc_r1h > 48.0))
                         if np.any(invalid_sens):
                             df.loc[invalid_sens, "enter_short_custom"] = 0
                             df.loc[invalid_sens, "enter_tag_custom"] = ""
