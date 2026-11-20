@@ -87,7 +87,8 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
 
     def version(self) -> str:
         base_ver = super().version()
-        return f"{base_ver} + AI_Gatekeeper_v13.5_Short_Precision"
+        return f"{base_ver} + AI_Gatekeeper_v13.4_Short_Recovery"
+        return f"{base_ver} + AI_Gatekeeper_v13.6_Short_Expansion"
 
     def __init__(self, config: dict) -> None:
         # Tạm thời ẩn các key custom khỏi nfi_parameters để Nostalgia gốc không log warning không cần thiết
@@ -802,6 +803,9 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
                         real_btc_r1h = df["real_btc_rsi_1h"].to_numpy() if "real_btc_rsi_1h" in df.columns else btc_r1h
                         sens_mask = np.zeros(len(df), dtype=bool)
                         guard_702_mask = np.zeros(len(df), dtype=bool)
+                        guard_749_mask = np.zeros(len(df), dtype=bool)
+                        guard_750_mask = np.zeros(len(df), dtype=bool)
+                        guard_751_mask = np.zeros(len(df), dtype=bool)
                         for idx in np.where(custom_mask)[0]:
                             toks = set(c_tags_all[idx].split())
                             is_weak_745_748 = {"745", "748"}.issubset(toks) and not (toks & {"721", "703"})
@@ -809,7 +813,19 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
                                 sens_mask[idx] = True
                             if toks == {"702", "703", "731"}:
                                 guard_702_mask[idx] = True
-                        invalid_sens = (sens_mask & ((btc_r1h > 48.0) | (pair_r1h > 48.0))) | (guard_702_mask & (real_btc_r1h > 48.0))
+                            if "749" in toks:
+                                guard_749_mask[idx] = True
+                            if "750" in toks:
+                                guard_750_mask[idx] = True
+                            if "751" in toks:
+                                guard_751_mask[idx] = True
+                        invalid_sens = (
+                            (sens_mask & ((btc_r1h > 48.0) | (pair_r1h > 48.0)))
+                            | (guard_702_mask & (real_btc_r1h > 48.0))
+                            | (guard_749_mask & (real_btc_r1h > 52.0))
+                            | (guard_750_mask & (real_btc_r1h > 48.0))
+                            | (guard_751_mask & (real_btc_r1h > 50.0))
+                        )
                         if np.any(invalid_sens):
                             df.loc[invalid_sens, "enter_short_custom"] = 0
                             df.loc[invalid_sens, "enter_tag_custom"] = ""
@@ -833,8 +849,10 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
                         is_weak_745_748 = {"745", "748"}.issubset(toks) and not (toks & {"721", "703"})
                         if (toks & {"701", "705", "706"}) or is_weak_745_748 or (toks == {"721", "731"}):
                             boost[k] = 0.06
-                        elif "747" in toks or {"702", "703", "731"}.issubset(toks):
+                        elif "747" in toks or "750" in toks or {"702", "703", "731"}.issubset(toks):
                             boost[k] = 0.04
+                        elif "749" in toks or "751" in toks:
+                            boost[k] = 0.03
                     req_thresholds[cand_idxs_valid] = regime_th + boost
 
                     approved_custom = custom_mask & (ai_probs >= req_thresholds)
@@ -1086,7 +1104,7 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
             # Cắt giảm rủi ro sớm khi vị thế Short âm vượt lên trên 1H EMA 50.
             # Đối với Tag 741 (bắt đỉnh SFP), 744, 745, 746: Thoát ngay tại ngưỡng -12.5% ROE (tiết kiệm ~40% mức lỗ mỗi lệnh)
             # Đối với các tag Short khác: Thoát tại -17.5% ROE.
-            cut_threshold = -0.125 if ("741" in orig_tag or "744" in orig_tag or "745" in orig_tag or "746" in orig_tag or "747" in orig_tag) else -0.175
+            cut_threshold = -0.125 if any(t in orig_tag for t in ("741", "744", "745", "746", "747")) else -0.175
             if current_profit <= cut_threshold and hasattr(self, "dp") and self.dp is not None:
                 df_pair, _ = self.dp.get_analyzed_dataframe(pair, self.timeframe)
                 if len(df_pair) > 0:
@@ -1128,8 +1146,9 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
                         if l_wick >= 0.30 and is_bouncing:
                             return f"exit_ai_reversal_harvest ( {orig_tag})"
 
-            # 3. AI TIME-DECAY & DRIFT SOFT EXIT:
-            if trade_duration_hours >= 12.0 and current_profit <= -0.040:
+            # 3. AI TIME-DECAY & DRIFT SOFT EXIT (Miễn mốc 12h cho các setup macro 4h/1d như 750, 751):
+            is_macro_htf_short = ("750" in orig_tag) or ("751" in orig_tag)
+            if (not is_macro_htf_short) and trade_duration_hours >= 12.0 and current_profit <= -0.040:
                 return f"exit_ai_drift_decay ( {orig_tag})"
 
             # Lệnh short giữ quá 28h mà không thể bứt phá (lợi nhuận <= +0.2%):
@@ -1535,7 +1554,7 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
             etag = str(entry_tag or "")
 
             # Tầng 1: Elite High-WR Short Tags (Track-record xuất sắc: 562, 542, 706, 724, 721, 741-743, 748, tổ hợp 702 703 731)
-            tier1_elite_tags = ("562", "542", "706", "724", "721", "711", "741", "742", "743", "748", "702 703 731", "701 702 703 731", "701 703 706 731", "743 744", "702 703 705 731")
+            tier1_elite_tags = ("562", "542", "706", "724", "721", "711", "741", "742", "743", "748", "749", "750", "751", "702 703 731", "701 702 703 731", "701 703 706 731", "743 744", "702 703 705 731")
             is_tier1 = any(t in etag.split() or t in etag for t in tier1_elite_tags)
 
             # Tầng 2: Standard AI Short Tags

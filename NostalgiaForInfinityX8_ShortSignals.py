@@ -79,6 +79,9 @@ class NostalgiaForInfinityX8_ShortSignals:
         self.enable_short_pnd_exhaustion = True        # Tag 746 (PND Exhaustion Waterfall Short)
         self.enable_short_overextended_pump = True     # Tag 747 (Overextended Pump / Upper-Band Exhaustion Short)
         self.enable_short_1h_bear_pullback = True      # Tag 748 (1h Bearish Regime + 5m Pullback Rejection Short)
+        self.enable_short_post_pump_reversal = False   # Tag 749 (Tắt sau R2: 51.7% WR)
+        self.enable_short_1h_downtrend_pullback = True # Tag 750 (4h/1d Downtrend + Dead-Cat Bounce Confluence 712/713+725)
+        self.enable_short_1h_bear_continuation = True  # Tag 751 (4h/1d Strong Downtrend + 5m Mid-Trend Rollover)
 
         # =========================================================================
         # Exit Thresholds chuyên biệt cho Short
@@ -96,7 +99,7 @@ class NostalgiaForInfinityX8_ShortSignals:
             "711", "712", "713", "714",
             "721", "722", "723", "724", "725",
             "731",
-            "741", "742", "743", "744", "745", "746", "747", "748",
+            "741", "742", "743", "744", "745", "746", "747", "748", "749", "750", "751",
             "short_custom_breakdown",
             "short_custom_sfp",
             "short_custom_exhaustion",
@@ -785,6 +788,113 @@ class NostalgiaForInfinityX8_ShortSignals:
             & (~btc_bullish)
         )
 
+        # LỚP GIÁP VĨ MÔ THỂ CHẾ 4H + 1D (Học theo DNA 95.7% WR của Tag 562)
+        def _col_or(name: str, default_val: float) -> np.ndarray:
+            if name in dataframe.columns:
+                arr = dataframe[name].to_numpy(copy=False)
+                return np.where(np.isfinite(arr), arr, default_val)
+            return np.full(n_rows, default_val, dtype=float)
+
+        ema_12_4h_arr = _col_or("EMA_12_4h", 0.0)
+        ema_200_4h_arr = _col_or("EMA_200_4h", 0.0)
+        rsi_14_4h_arr = _col_or("RSI_14_4h", 50.0)
+        rsi_14_1d_arr = _col_or("RSI_14_1d", 50.0)
+        roc_9_1d_arr = _col_or("ROC_9_1d", 0.0)
+        roc_9_4h_arr = _col_or("ROC_9_4h", 0.0)
+        aroonu_14_4h_arr = _col_or("AROONU_14_4h", 50.0)
+        aroonu_14_1h_arr = _col_or("AROONU_14_1h", 50.0)
+        cmf_20_4h_arr = _col_or("CMF_20_4h", 0.0)
+        rsi_1h_arr = _col_or("RSI_14_1h", 50.0)
+
+        has_4h_ema = (ema_12_4h_arr > 0) & (ema_200_4h_arr > 0)
+        macro_4h_1d_bear = (
+            has_4h_ema
+            & (ema_12_4h_arr < ema_200_4h_arr)
+            & (rsi_14_4h_arr < 48.0)
+            & (rsi_14_1d_arr < 50.0) & (rsi_14_1d_arr > 25.0)
+            & (roc_9_1d_arr < 0.0)
+            & (roc_9_4h_arr < 2.0)
+            & (aroonu_14_4h_arr < 60.0)
+            & (aroonu_14_1h_arr < 45.0)
+            & (cmf_20_4h_arr < 0.0)
+        )
+
+        # TAG 749: Institutional 4h/1d Downtrend + 5m Relief Bounce Rejection at EMA21/50
+        cond_749 = (
+            (volume > 0)
+            & is_liquid_for_short
+            & (~weekend_thin_liq)
+            & (~monday_open_trap)
+            & macro_4h_1d_bear
+            & (~close_above_ema50_1h)
+            & (~close_above_ema200_1h)
+            & (high >= ema_21 * 0.998)
+            & (close < ema_9)
+            & (close < open_px)
+            & (upper_wick_ratio >= 0.30)
+            & (lower_wick_ratio <= 0.22)
+            & (body_ratio >= 0.20)
+            & (rsi_14 >= 38.0) & (rsi_14 <= 60.0)
+            & (sell_vol_r3 >= 0.55)
+            & (macdhist < shift_macdhist)
+            & (vol_spike_ratio >= 1.20) & (vol_spike_ratio <= 4.50)
+            & (~btc_bullish)
+        )
+
+        # TAG 750: Institutional 4h/1d Downtrend + Dead-Cat Bounce BBU Spike Rejection (Confluence 712/713 + 725)
+        macro_4h_1d_bear_bounce = (
+            has_4h_ema
+            & (ema_12_4h_arr < ema_200_4h_arr)
+            & (rsi_14_4h_arr < 50.0) & (rsi_14_4h_arr >= 28.5)
+            & (rsi_14_1d_arr < 52.0) & (rsi_14_1d_arr > 25.0)
+            & (roc_9_1d_arr < 2.0)
+            & (aroonu_14_4h_arr < 60.0)
+            & (cmf_20_4h_arr < 0.0)
+        )
+        cond_750 = (
+            (volume > 0)
+            & is_liquid_for_short
+            & (~weekend_thin_liq)
+            & (~monday_open_trap)
+            & macro_4h_1d_bear_bounce
+            & (rsi_1h_arr <= 62.0)
+            & (high >= bbu * 0.998)
+            & (rsi_14 >= 66.0)
+            & (close < open_px)
+            & (upper_wick_ratio >= 0.42)
+            & (lower_wick_ratio <= 0.22)
+            & (macdhist < shift_macdhist)
+            & (vol_spike_ratio >= 1.30) & (vol_spike_ratio <= 5.00)
+            & (~btc_bullish)
+        )
+
+        # TAG 751: Institutional 1h/4h/1d Strong Downtrend + 5m Mid-Trend Overbought Rollover
+        cond_751 = (
+            (volume > 0)
+            & is_liquid_for_short
+            & (~weekend_thin_liq)
+            & (~monday_open_trap)
+            & has_4h_ema
+            & (ema_12_4h_arr < ema_200_4h_arr)
+            & (rsi_14_4h_arr < 46.0)
+            & (rsi_14_1d_arr < 49.0) & (rsi_14_1d_arr > 26.0)
+            & (roc_9_1d_arr < -1.0)
+            & (aroonu_14_4h_arr < 55.0)
+            & (aroonu_14_1h_arr < 40.0)
+            & (cmf_20_4h_arr < -0.02)
+            & (rsi_1h_arr < 46.0) & (rsi_1h_arr > 26.0)
+            & (~close_above_ema50_1h)
+            & (~close_above_ema200_1h)
+            & (close < open_px)
+            & (upper_wick_ratio >= 0.30)
+            & (lower_wick_ratio <= 0.20)
+            & (rsi_14 >= 46.0) & (rsi_14 <= 72.0)
+            & (macdhist < shift_macdhist)
+            & (sell_vol_r3 >= 0.55)
+            & (vol_spike_ratio >= 1.20) & (vol_spike_ratio <= 4.50)
+            & (~btc_bullish)
+        )
+
         # Setup 1: Exhaustion Confluence - ĐÃ TẮT ĐỂ TRIỆT TIÊU 100% NHIỄU BẮT ĐỈNH TRONG SÓNG TĂNG
         trigger_exhaustion = np.zeros(n_rows, dtype=bool)
 
@@ -853,6 +963,15 @@ class NostalgiaForInfinityX8_ShortSignals:
         trigger_748 = (
             cond_748 & cond_731 & (cond_703 | cond_724 | cond_721) & (~cond_742)
         ) if getattr(self, "enable_short_1h_bear_pullback", True) else np.zeros(n_rows, dtype=bool)
+        trigger_749 = (
+            cond_749
+        ) if getattr(self, "enable_short_post_pump_reversal", True) else np.zeros(n_rows, dtype=bool)
+        trigger_750 = (
+            cond_750 & cond_712 & cond_713 & cond_725 & (~cond_747)
+        ) if getattr(self, "enable_short_1h_downtrend_pullback", True) else np.zeros(n_rows, dtype=bool)
+        trigger_751 = (
+            cond_751 & cond_725 & (~cond_747) & (~cond_750)
+        ) if getattr(self, "enable_short_1h_bear_continuation", True) else np.zeros(n_rows, dtype=bool)
 
         # BỘ LỌC VĨ MÔ QUY TẮC VÀNG (v8.0): BẮT BUỘC DOWNTREND KHUNG LỚN & KHÔNG BÁN ĐÁY QUÁ BÁN & THANH KHOẢN AN TOÀN
         macro_bearish_regime = (
@@ -884,7 +1003,7 @@ class NostalgiaForInfinityX8_ShortSignals:
                 | trigger_exhaustion
             )
             & macro_bearish_regime
-        ) | trigger_747 | trigger_748
+        ) | trigger_747 | trigger_748 | trigger_749 | trigger_750 | trigger_751
 
         # Gán nhãn các tag cho những cây nến ĐẠT TIÊU CHUẨN CONFLUENCE
         idxs = np.where(qualified_entry)[0]
@@ -913,6 +1032,9 @@ class NostalgiaForInfinityX8_ShortSignals:
                 (cond_746, "746"),
                 (cond_747, "747"),
                 (cond_748, "748"),
+                (cond_749, "749"),
+                (cond_750, "750"),
+                (cond_751, "751"),
             ]
             for sig_mask, tag in all_signals:
                 active_idxs = np.intersect1d(idxs, np.where(sig_mask)[0])
