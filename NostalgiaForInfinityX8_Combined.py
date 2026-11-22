@@ -31,10 +31,10 @@ class NostalgiaForInfinityX8_Combined(NostalgiaForInfinityX8):
     # Safety stoploss for Futures (80% margin loss)
     stoploss = -0.80
 
-    # Futures leverage 5.0x
-    futures_mode_leverage: float = 5.0
-    futures_mode_leverage_rebuy_mode: float = 5.0
-    futures_mode_leverage_grind_mode: float = 5.0
+    # Futures leverage 6.0x
+    futures_mode_leverage: float = 6.0
+    futures_mode_leverage_rebuy_mode: float = 6.0
+    futures_mode_leverage_grind_mode: float = 6.0
 
     def version(self) -> str:
         base_ver = super().version()
@@ -43,9 +43,9 @@ class NostalgiaForInfinityX8_Combined(NostalgiaForInfinityX8):
     def __init__(self, config: dict) -> None:
         super().__init__(config)
         self.stoploss = -0.80
-        self.futures_mode_leverage = 5.0
-        self.futures_mode_leverage_rebuy_mode = 5.0
-        self.futures_mode_leverage_grind_mode = 5.0
+        self.futures_mode_leverage = 6.0
+        self.futures_mode_leverage_rebuy_mode = 6.0
+        self.futures_mode_leverage_grind_mode = 6.0
 
         # Initialize the modular Short Strategy
         self.short_strategy = NostalgiaForInfinityX8_ShortSignals(config)
