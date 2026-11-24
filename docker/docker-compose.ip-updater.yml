@@ -1,0 +1,18 @@
+services:
+  binance-ip-updater:
+    image: python:3.12-slim
+    container_name: ${FREQTRADE__BOT_NAME:-Example_Test_Account}_binance_ip_updater
+    restart: unless-stopped
+    working_dir: /app
+    volumes:
+      - "../tools/binance_ip_whitelist_updater.py:/app/tools/binance_ip_whitelist_updater.py:ro"
+      - "../user_data:/app/user_data"
+    env_file:
+      - path: ../.env
+        required: false
+    command: >
+      python3 -u /app/tools/binance_ip_whitelist_updater.py
+      --watch
+      --interval ${BINANCE_IP_CHECK_INTERVAL:-300}
+      --reconcile-every ${BINANCE_IP_RECONCILE_EVERY:-3600}
+      --log-file /app/user_data/logs/binance_ip_updater.log
