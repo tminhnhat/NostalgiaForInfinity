@@ -306,7 +306,7 @@ class NostalgiaForInfinityX8_MMLiquiditySignals:
                 & (df["mm_dist_ema200_1h"] >= -0.10)
                 & (df["mm_rsi_1h"] >= 21.0)
             )
-            # 802_MM_AI (v13.8: knife-catching guards + absorption/taker confirmation)
+            # 802_MM_AI (v13.8b: gentle macro crash guards + calibrated Exit v2)
             c802 = (
                 l_pre
                 & self.tag_toggles.get("802", True)
@@ -314,11 +314,8 @@ class NostalgiaForInfinityX8_MMLiquiditySignals:
                 & (df["mm_vwap_z_24h"] <= -2.5)
                 & (df["mm_absorption"] >= 2.5)
                 & (df["mm_mfi_14"] < 35.0)
-                & (df["real_taker_buy_ratio"] >= 0.45)
-                & (df["mm_lower_wick_ratio"] >= 0.20)
-                & (df["btc_ret_1h"] >= -0.018)
-                & (df["mm_dist_ema200_1h"] >= -0.10)
-                & (df["mm_rsi_1h"] >= 20.0)
+                & (df["btc_ret_1h"] >= -0.022)
+                & (df["mm_dist_ema200_1h"] >= -0.12)
             )
             l_pre_803 = (
                 has_liq
@@ -353,19 +350,15 @@ class NostalgiaForInfinityX8_MMLiquiditySignals:
 
                 feats = self.long_ai["features"]
                 probs = self.long_ai["model"].predict_proba(df.loc[cand_idx, feats])[:, 1]
-                ai_802_th = max(self.ai_long_threshold, 0.85)
                 passed_idx = cand_idx[probs >= self.ai_long_threshold]
-                prob_map = dict(zip(cand_idx, probs))
                 last_l_pos = -1000
                 for idx in passed_idx:
-                    # Restore baseline Long priority order: 801 -> 802 -> 803
-                    tag = "801_MM_AI" if c801.at[idx] else ("802_MM_AI" if c802.at[idx] else "803_MM_AI")
-                    if tag == "802_MM_AI" and float(prob_map[idx]) < ai_802_th:
-                        continue
                     pos = int(df.index.get_loc(idx))
                     if pos - last_l_pos < 48:  # 4h cooldown per pair/side (matches 500p simulator)
                         continue
                     last_l_pos = pos
+                    # Restore baseline Long priority order: 801 -> 802 -> 803
+                    tag = "801_MM_AI" if c801.at[idx] else ("802_MM_AI" if c802.at[idx] else "803_MM_AI")
                     df.at[idx, "enter_long"] = 1
                     df.at[idx, "enter_tag"] = tag
 
