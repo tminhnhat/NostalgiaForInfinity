@@ -306,7 +306,7 @@ class NostalgiaForInfinityX8_MMLiquiditySignals:
                 & (df["mm_dist_ema200_1h"] >= -0.10)
                 & (df["mm_rsi_1h"] >= 21.0)
             )
-            # 802_MM_AI (reference tag - untouched)
+            # 802_MM_AI (v13.8: knife-catching guards + absorption/taker confirmation)
             c802 = (
                 l_pre
                 & self.tag_toggles.get("802", True)
@@ -314,6 +314,11 @@ class NostalgiaForInfinityX8_MMLiquiditySignals:
                 & (df["mm_vwap_z_24h"] <= -2.5)
                 & (df["mm_absorption"] >= 2.5)
                 & (df["mm_mfi_14"] < 35.0)
+                & (df["real_taker_buy_ratio"] >= 0.45)
+                & (df["mm_lower_wick_ratio"] >= 0.20)
+                & (df["btc_ret_1h"] >= -0.018)
+                & (df["mm_dist_ema200_1h"] >= -0.10)
+                & (df["mm_rsi_1h"] >= 20.0)
             )
             l_pre_803 = (
                 has_liq
@@ -348,15 +353,19 @@ class NostalgiaForInfinityX8_MMLiquiditySignals:
 
                 feats = self.long_ai["features"]
                 probs = self.long_ai["model"].predict_proba(df.loc[cand_idx, feats])[:, 1]
+                ai_802_th = max(self.ai_long_threshold, 0.85)
                 passed_idx = cand_idx[probs >= self.ai_long_threshold]
+                prob_map = dict(zip(cand_idx, probs))
                 last_l_pos = -1000
                 for idx in passed_idx:
+                    # Restore baseline Long priority order: 801 -> 802 -> 803
+                    tag = "801_MM_AI" if c801.at[idx] else ("802_MM_AI" if c802.at[idx] else "803_MM_AI")
+                    if tag == "802_MM_AI" and float(prob_map[idx]) < ai_802_th:
+                        continue
                     pos = int(df.index.get_loc(idx))
                     if pos - last_l_pos < 48:  # 4h cooldown per pair/side (matches 500p simulator)
                         continue
                     last_l_pos = pos
-                    # Restore baseline Long priority order: 801 -> 802 -> 803
-                    tag = "801_MM_AI" if c801.at[idx] else ("802_MM_AI" if c802.at[idx] else "803_MM_AI")
                     df.at[idx, "enter_long"] = 1
                     df.at[idx, "enter_tag"] = tag
 
@@ -465,10 +474,11 @@ class NostalgiaForInfinityX8_MMLiquiditySignals:
             best_rate = float(trade.max_rate) if trade.max_rate is not None else open_rate
             mfe_roe = (best_rate - open_rate) / open_rate * leverage
 
-        # Keep reference tags 802_MM_AI & 851_MM_AI on exact Exit v1;
-        # apply calibrated exits for 852_MM_AI / 853_MM_AI / 801_MM_AI / 803_MM_AI.
+        # Keep reference tag 851_MM_AI on exact Exit v1;
+        # apply calibrated exits for 852_MM_AI / 853_MM_AI / 801_MM_AI / 802_MM_AI / 803_MM_AI.
         is_opt_short = trade.is_short and (("852_MM_AI" in orig_tag) or ("853_MM_AI" in orig_tag))
         is_opt_801 = (not trade.is_short) and ("801_MM_AI" in orig_tag)
+        is_opt_802 = (not trade.is_short) and ("802_MM_AI" in orig_tag)
         is_opt_803 = (not trade.is_short) and ("803_MM_AI" in orig_tag)
 
         if is_opt_short:
@@ -530,6 +540,37 @@ class NostalgiaForInfinityX8_MMLiquiditySignals:
                                 return f"exit_mm_vwap_reversion ( {orig_tag})"
 
             if current_profit <= -0.36:
+                return f"exit_mm_long_hard_sl ( {orig_tag})"
+            if dur_hours >= 144.0:
+                return f"exit_mm_long_max_144h ( {orig_tag})"
+            return None
+
+        if is_opt_802:
+            # Calibrated Exit v2 for 802_MM_AI (target Avg >= +5.0%/trade, tighter SL -26% ROE)
+            if mfe_roe >= 0.30 and current_profit <= mfe_roe - 0.06 and current_profit >= 0.22:
+                return f"exit_mm_trail_t4 ( {orig_tag})"
+            if mfe_roe >= 0.20 and current_profit <= mfe_roe - 0.05 and current_profit >= 0.14:
+                return f"exit_mm_trail_t3 ( {orig_tag})"
+            if mfe_roe >= 0.140 and current_profit <= 0.112 and current_profit >= 0.088:
+                return f"exit_mm_trail_t2 ( {orig_tag})"
+            if mfe_roe >= 0.105 and current_profit <= 0.080 and current_profit >= 0.064:
+                return f"exit_mm_trail_t1 ( {orig_tag})"
+            if mfe_roe >= 0.082 and current_profit <= 0.062 and current_profit >= 0.048:
+                return f"exit_mm_mfe_protect ( {orig_tag})"
+
+            if (current_profit >= 0.080 or current_profit <= -0.18) and dp is not None:
+                df_pair, _ = dp.get_analyzed_dataframe(pair, timeframe)
+                if len(df_pair) > 0:
+                    rows = df_pair.loc[df_pair["date"] <= current_time]
+                    if len(rows) > 0:
+                        vw = rows.iloc[-1].get("mm_vwap_4h", np.nan)
+                        if vw is not None and not np.isnan(float(vw)):
+                            if current_profit >= 0.080 and current_rate >= float(vw):
+                                return f"exit_mm_vwap_reversion ( {orig_tag})"
+                            if current_profit <= -0.18 and current_rate < float(vw) * 0.96:
+                                return f"exit_mm_long_struct_cut ( {orig_tag})"
+
+            if current_profit <= -0.26:
                 return f"exit_mm_long_hard_sl ( {orig_tag})"
             if dur_hours >= 144.0:
                 return f"exit_mm_long_max_144h ( {orig_tag})"
