@@ -14,6 +14,8 @@ x-common-settings:
     - "./NostalgiaForInfinityX8.py:/freqtrade/NostalgiaForInfinityX8.py"
     - "./NostalgiaForInfinityX8_Combined.py:/freqtrade/NostalgiaForInfinityX8_Combined.py"
     - "./NostalgiaForInfinityX8_ShortSignals.py:/freqtrade/NostalgiaForInfinityX8_ShortSignals.py"
+    - "./NostalgiaForInfinityX8_MMLiquiditySignals.py:/freqtrade/NostalgiaForInfinityX8_MMLiquiditySignals.py"
+    - "./BinanceMMDataProvider.py:/freqtrade/BinanceMMDataProvider.py"
     - "./${FREQTRADE__STRATEGY:-NostalgiaForInfinityX8}.py:/freqtrade/${FREQTRADE__STRATEGY:-NostalgiaForInfinityX8}.py"
     - "./NostalgiaForInfinityX8.py:/freqtrade/user_data/strategies/NostalgiaForInfinityX8.py"
     - "./NostalgiaForInfinityX8_Combined.py:/freqtrade/user_data/strategies/NostalgiaForInfinityX8_Combined.py"

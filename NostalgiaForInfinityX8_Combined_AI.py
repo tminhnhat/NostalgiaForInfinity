@@ -18,6 +18,7 @@ import talib.abstract as ta
 
 from NostalgiaForInfinityX8 import NostalgiaForInfinityX8
 from NostalgiaForInfinityX8_Combined import NostalgiaForInfinityX8_Combined
+from NostalgiaForInfinityX8_MMLiquiditySignals import NostalgiaForInfinityX8_MMLiquiditySignals
 from freqtrade.persistence import Trade
 
 log = logging.getLogger(__name__)
@@ -93,7 +94,12 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
     def __init__(self, config: dict) -> None:
         # Tạm thời ẩn các key custom khỏi nfi_parameters để Nostalgia gốc không log warning không cần thiết
         nfi_params = config.get("nfi_parameters", {}) if isinstance(config, dict) else {}
-        custom_keys = ["disabled_custom_short_tags", "custom_short_tag_params", "custom_short_signal_params", "tag_toggles", "disabled_tags"]
+        custom_keys = [
+            "disabled_custom_short_tags", "custom_short_tag_params", "custom_short_signal_params",
+            "tag_toggles", "disabled_tags",
+            "enable_mm_liquidity_signals", "mm_enable_long", "mm_enable_short",
+            "mm_ai_long_threshold", "mm_ai_short_threshold", "mm_liquidity_toggles",
+        ]
         popped = {}
         if isinstance(nfi_params, dict):
             for k in custom_keys:
@@ -154,6 +160,35 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
         # Nạp mô hình AI (ưu tiên v2, fallback v1)
         self.ai_model = None
         self._load_ai_model()
+
+        # Market Maker / Order Flow / Liquidation Heatmap + AI v2 Module (6 tags: 801-803 Long, 851-853 Short)
+        nfi_params_cfg = self.config.get("nfi_parameters", {}) if isinstance(self.config, dict) else {}
+        self.enable_mm_liquidity_signals: bool = bool(
+            self.config.get(
+                "enable_mm_liquidity_signals",
+                nfi_params_cfg.get("enable_mm_liquidity_signals", True) if isinstance(nfi_params_cfg, dict) else True,
+            )
+        )
+        self.mm_liquidity: Optional[NostalgiaForInfinityX8_MMLiquiditySignals] = None
+        if self.enable_mm_liquidity_signals:
+            self.mm_liquidity = NostalgiaForInfinityX8_MMLiquiditySignals(self.config)
+            for ltag in self.mm_liquidity.mm_long_tags:
+                if ltag not in self.long_normal_mode_tags:
+                    self.long_normal_mode_tags.append(ltag)
+                if ltag not in self.long_known_mode_tags:
+                    self.long_known_mode_tags.append(ltag)
+            for stag in self.mm_liquidity.mm_short_tags:
+                if stag not in self.short_normal_mode_tags:
+                    self.short_normal_mode_tags.append(stag)
+                if stag not in self.short_known_mode_tags:
+                    self.short_known_mode_tags.append(stag)
+                if stag not in self.short_exit_known_mode_tags:
+                    self.short_exit_known_mode_tags.append(stag)
+            log.info(
+                "MM Liquidity AI v2 ENABLED (Long=%s, Short=%s)",
+                self.mm_liquidity.enable_mm_long,
+                self.mm_liquidity.enable_mm_short,
+            )
 
         # Bộ nhớ đệm kiểm toán Veto (dành cho script đo lường Alpha)
         self.veto_audit_records: List[Dict[str, Any]] = []
@@ -342,6 +377,10 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
         2. Tính toán bổ sung 18 đặc trưng sạch Đa Khung Thời Gian (MTF) phục vụ AI Gatekeeper.
         """
         df = super().populate_indicators(df, metadata)
+
+        if getattr(self, "enable_mm_liquidity_signals", False) and self.mm_liquidity is not None:
+            is_live = not self.is_backtest_mode() if hasattr(self, "is_backtest_mode") else False
+            df = self.mm_liquidity.populate_indicators(df, metadata, dp=getattr(self, "dp", None), is_live_mode=is_live)
 
         # Đảm bảo không tính toán lặp lại nếu đã có
         if "ai_feat_upper_wick" in df.columns:
@@ -912,6 +951,11 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
             )
             df.loc[:, "enter_tag"] = merged_tags
 
+        # 5. Market Maker / Liquidity Heatmap + AI v2 Entries (non-overwriting)
+        if getattr(self, "enable_mm_liquidity_signals", False) and self.mm_liquidity is not None:
+            is_live = not self.is_backtest_mode() if hasattr(self, "is_backtest_mode") else False
+            df = self.mm_liquidity.populate_entry_trend(df, metadata, is_live_mode=is_live)
+
         df = self._apply_tag_toggles(df)
 
         ohlcv_cols = {"date", "open", "high", "low", "close", "volume"}
@@ -1008,6 +1052,18 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
         orig_tag = getattr(trade, "enter_tag", "") or ""
         leverage = trade.leverage or 5.0
         open_rate = trade.open_rate
+
+        # 0.0. Dedicated Exit v1 Engine for MM Liquidity AI v2 tags (801-803 & 851-853)
+        if NostalgiaForInfinityX8_MMLiquiditySignals.is_mm_tag(orig_tag):
+            return NostalgiaForInfinityX8_MMLiquiditySignals.check_mm_exit(
+                pair=pair,
+                trade=trade,
+                current_time=current_time,
+                current_rate=current_rate,
+                current_profit=current_profit,
+                dp=getattr(self, "dp", None),
+                timeframe=self.timeframe,
+            )
 
         # =========================================================================
         # 0. HARD PRE-EMPTIVE STOPLOSS (v9.0 - TRIỆT TIÊU 100% RỦI RO SÀN THANH LÝ)
@@ -1227,6 +1283,10 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
            - Giữ nguyên 100% cơ chế Grinding/Rebuy/De-risk đa tầng của Nostalgia cho Long.
            - Không can thiệp thô bạo vào Long để tránh làm đứt gãy State Machine của SOXL (+32$), SNXX (+11$), WLD (+31$).
         """
+        # ĐỐI VỚI MM LIQUIDITY AI v2: Single-entry không DCA / không Grind
+        if NostalgiaForInfinityX8_MMLiquiditySignals.is_mm_tag(getattr(trade, "enter_tag", "")):
+            return None
+
         adj = super().adjust_trade_position(
             trade=trade,
             current_time=current_time,
@@ -1409,6 +1469,12 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
                                 return False
             except Exception as e:
                 log.warning("Circuit Breaker evaluation error for %s: %s", pair, e)
+
+        # Anti-Correlation Cooldown for MM Liquidity Long entries (max 2 per 60 minutes)
+        if side == "long" and getattr(self, "enable_mm_liquidity_signals", False) and self.mm_liquidity is not None:
+            if NostalgiaForInfinityX8_MMLiquiditySignals.is_mm_tag(entry_tag):
+                if not self.mm_liquidity.allow_mm_long_entry(current_time, max_per_hour=2):
+                    return False
 
         return True
 
