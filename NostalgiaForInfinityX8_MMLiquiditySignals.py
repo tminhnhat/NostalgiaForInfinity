@@ -306,7 +306,7 @@ class NostalgiaForInfinityX8_MMLiquiditySignals:
                 & (df["mm_dist_ema200_1h"] >= -0.10)
                 & (df["mm_rsi_1h"] >= 21.0)
             )
-            # 802_MM_AI (v13.8b: gentle macro crash guards + calibrated Exit v2)
+            # 802_MM_AI (v13.8c: original deep-reversal entry restored; upgrade lives in Exit v2)
             c802 = (
                 l_pre
                 & self.tag_toggles.get("802", True)
@@ -314,8 +314,6 @@ class NostalgiaForInfinityX8_MMLiquiditySignals:
                 & (df["mm_vwap_z_24h"] <= -2.5)
                 & (df["mm_absorption"] >= 2.5)
                 & (df["mm_mfi_14"] < 35.0)
-                & (df["btc_ret_1h"] >= -0.022)
-                & (df["mm_dist_ema200_1h"] >= -0.12)
             )
             l_pre_803 = (
                 has_liq
@@ -539,7 +537,7 @@ class NostalgiaForInfinityX8_MMLiquiditySignals:
             return None
 
         if is_opt_802:
-            # Calibrated Exit v2 for 802_MM_AI (target Avg >= +5.0%/trade, tighter SL -26% ROE)
+            # Calibrated Exit v2 for 802_MM_AI (target Avg >= +5.0%/trade, tighter SL -22% ROE)
             if mfe_roe >= 0.30 and current_profit <= mfe_roe - 0.06 and current_profit >= 0.22:
                 return f"exit_mm_trail_t4 ( {orig_tag})"
             if mfe_roe >= 0.20 and current_profit <= mfe_roe - 0.05 and current_profit >= 0.14:
@@ -551,19 +549,17 @@ class NostalgiaForInfinityX8_MMLiquiditySignals:
             if mfe_roe >= 0.082 and current_profit <= 0.062 and current_profit >= 0.048:
                 return f"exit_mm_mfe_protect ( {orig_tag})"
 
-            if (current_profit >= 0.080 or current_profit <= -0.18) and dp is not None:
+            if current_profit >= 0.080 and dp is not None:
                 df_pair, _ = dp.get_analyzed_dataframe(pair, timeframe)
                 if len(df_pair) > 0:
                     rows = df_pair.loc[df_pair["date"] <= current_time]
                     if len(rows) > 0:
                         vw = rows.iloc[-1].get("mm_vwap_4h", np.nan)
                         if vw is not None and not np.isnan(float(vw)):
-                            if current_profit >= 0.080 and current_rate >= float(vw):
+                            if current_rate >= float(vw):
                                 return f"exit_mm_vwap_reversion ( {orig_tag})"
-                            if current_profit <= -0.18 and current_rate < float(vw) * 0.96:
-                                return f"exit_mm_long_struct_cut ( {orig_tag})"
 
-            if current_profit <= -0.26:
+            if current_profit <= -0.22:
                 return f"exit_mm_long_hard_sl ( {orig_tag})"
             if dur_hours >= 144.0:
                 return f"exit_mm_long_max_144h ( {orig_tag})"

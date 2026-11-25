@@ -88,7 +88,7 @@ class NostalgiaForInfinityX8_Combined_AI(NostalgiaForInfinityX8_Combined):
 
     def version(self) -> str:
         base_ver = super().version()
-        return f"{base_ver} + AI_Gatekeeper_v13.8b_802_Alpha"
+        return f"{base_ver} + AI_Gatekeeper_v13.8c_802_Alpha"
 
     def __init__(self, config: dict) -> None:
         # Tạm thời ẩn các key custom khỏi nfi_parameters để Nostalgia gốc không log warning không cần thiết
