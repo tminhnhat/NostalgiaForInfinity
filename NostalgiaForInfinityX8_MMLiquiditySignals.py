@@ -306,7 +306,7 @@ class NostalgiaForInfinityX8_MMLiquiditySignals:
                 & (df["mm_dist_ema200_1h"] >= -0.10)
                 & (df["mm_rsi_1h"] >= 21.0)
             )
-            # 802_MM_AI (v13.8c: original deep-reversal entry restored; upgrade lives in Exit v2)
+            # 802_MM_AI (reference tag - untouched)
             c802 = (
                 l_pre
                 & self.tag_toggles.get("802", True)
@@ -465,11 +465,10 @@ class NostalgiaForInfinityX8_MMLiquiditySignals:
             best_rate = float(trade.max_rate) if trade.max_rate is not None else open_rate
             mfe_roe = (best_rate - open_rate) / open_rate * leverage
 
-        # Keep reference tag 851_MM_AI on exact Exit v1;
-        # apply calibrated exits for 852_MM_AI / 853_MM_AI / 801_MM_AI / 802_MM_AI / 803_MM_AI.
+        # Keep reference tags 802_MM_AI & 851_MM_AI on exact Exit v1;
+        # apply calibrated exits for 852_MM_AI / 853_MM_AI / 801_MM_AI / 803_MM_AI.
         is_opt_short = trade.is_short and (("852_MM_AI" in orig_tag) or ("853_MM_AI" in orig_tag))
         is_opt_801 = (not trade.is_short) and ("801_MM_AI" in orig_tag)
-        is_opt_802 = (not trade.is_short) and ("802_MM_AI" in orig_tag)
         is_opt_803 = (not trade.is_short) and ("803_MM_AI" in orig_tag)
 
         if is_opt_short:
@@ -531,35 +530,6 @@ class NostalgiaForInfinityX8_MMLiquiditySignals:
                                 return f"exit_mm_vwap_reversion ( {orig_tag})"
 
             if current_profit <= -0.36:
-                return f"exit_mm_long_hard_sl ( {orig_tag})"
-            if dur_hours >= 144.0:
-                return f"exit_mm_long_max_144h ( {orig_tag})"
-            return None
-
-        if is_opt_802:
-            # Calibrated Exit v2 for 802_MM_AI (target Avg >= +5.0%/trade, tighter SL -22% ROE)
-            if mfe_roe >= 0.30 and current_profit <= mfe_roe - 0.06 and current_profit >= 0.22:
-                return f"exit_mm_trail_t4 ( {orig_tag})"
-            if mfe_roe >= 0.20 and current_profit <= mfe_roe - 0.05 and current_profit >= 0.14:
-                return f"exit_mm_trail_t3 ( {orig_tag})"
-            if mfe_roe >= 0.140 and current_profit <= 0.112 and current_profit >= 0.088:
-                return f"exit_mm_trail_t2 ( {orig_tag})"
-            if mfe_roe >= 0.105 and current_profit <= 0.080 and current_profit >= 0.064:
-                return f"exit_mm_trail_t1 ( {orig_tag})"
-            if mfe_roe >= 0.082 and current_profit <= 0.062 and current_profit >= 0.048:
-                return f"exit_mm_mfe_protect ( {orig_tag})"
-
-            if current_profit >= 0.080 and dp is not None:
-                df_pair, _ = dp.get_analyzed_dataframe(pair, timeframe)
-                if len(df_pair) > 0:
-                    rows = df_pair.loc[df_pair["date"] <= current_time]
-                    if len(rows) > 0:
-                        vw = rows.iloc[-1].get("mm_vwap_4h", np.nan)
-                        if vw is not None and not np.isnan(float(vw)):
-                            if current_rate >= float(vw):
-                                return f"exit_mm_vwap_reversion ( {orig_tag})"
-
-            if current_profit <= -0.22:
                 return f"exit_mm_long_hard_sl ( {orig_tag})"
             if dur_hours >= 144.0:
                 return f"exit_mm_long_max_144h ( {orig_tag})"
