@@ -55,7 +55,7 @@ class NostalgiaForInfinityX8_MMLiquiditySignals:
 
         self.tag_toggles: Dict[str, bool] = {
             "801": True,
-            "802": True,
+            "802": False,
             "803": True,
             "851": True,
             "852": True,
