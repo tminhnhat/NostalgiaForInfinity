@@ -57,17 +57,18 @@ class NostalgiaForInfinityX8_MMLiquiditySignals:
             "801": True,
             "802": True,
             "803": True,
-            "811": True,
-            "812": True,
-            "813": True,
-            "814": True,
+            # Smart Money v3 tags (pending AI Gatekeeper v3 training)
+            "811": False,
+            "812": False,
+            "813": False,
+            "814": False,
             "851": True,
             "852": True,
             "853": True,
-            "861": True,
-            "862": True,
-            "863": True,
-            "864": True,
+            "861": False,
+            "862": False,
+            "863": False,
+            "864": False,
         }
         overrides = self.config.get("mm_liquidity_toggles", nfi_params.get("mm_liquidity_toggles", {}))
         if isinstance(overrides, dict):
