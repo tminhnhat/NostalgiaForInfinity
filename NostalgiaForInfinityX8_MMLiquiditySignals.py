@@ -54,21 +54,23 @@ class NostalgiaForInfinityX8_MMLiquiditySignals:
         )
 
         self.tag_toggles: Dict[str, bool] = {
+            # Reference proven tags
             "801": True,
             "802": True,
             "803": True,
-            # Smart Money v3 tags (gated via AI Gatekeeper v3)
-            "811": True,
-            "812": True,
-            "813": True,
+            # Smart Money v3 tags (gated via AI Gatekeeper v3; 814 verified at 92.31% WR)
+            "811": False,
+            "812": False,
+            "813": False,
             "814": True,
+            # Reference proven short tags
             "851": True,
             "852": True,
             "853": True,
-            "861": True,
-            "862": True,
-            "863": True,
-            "864": True,
+            "861": False,
+            "862": False,
+            "863": False,
+            "864": False,
         }
         overrides = self.config.get("mm_liquidity_toggles", nfi_params.get("mm_liquidity_toggles", {}))
         if isinstance(overrides, dict):
@@ -365,7 +367,7 @@ class NostalgiaForInfinityX8_MMLiquiditySignals:
                 & (df["mm_dist_swing_low_24h"] <= 0.015)
                 & (df["mm_lower_wick_ratio"] >= 0.40)
                 & (df["mm_rvol"] >= 2.2)
-                & (df["mm_vwap_z_24h"] <= -1.8)
+                & (df["mm_vwap_z_24h"] <= -2.2)
                 & ((df["oi_chg_15m"] <= -0.010) | (df["oi_chg_1h"] <= -0.020) | (df["real_taker_buy_ratio"] >= 0.52))
                 & ((df["whale_vs_retail_div"] > 0.0) | (df["top_pos_ls"] >= 1.05))
                 & (df["btc_ret_1h"] >= -0.020)
@@ -390,7 +392,7 @@ class NostalgiaForInfinityX8_MMLiquiditySignals:
                 & self.tag_toggles.get("813", True)
                 & (df["whale_vs_retail_div"] >= 0.15)
                 & (df["top_pos_ls_chg_1h"] >= 0.03)
-                & (df["mm_vwap_z_24h"] <= -1.8)
+                & (df["mm_vwap_z_24h"] <= -2.2)
                 & (df["mm_rvol"] >= 2.0)
                 & (df["mm_absorption"] >= 2.2)
                 & (df["whale_trade_size_ratio"] >= 1.20)
