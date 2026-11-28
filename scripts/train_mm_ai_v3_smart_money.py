@@ -77,22 +77,55 @@ def make_session(pool_size: int = 64) -> requests.Session:
 SESSION = make_session(64)
 
 def fetch_top_500_usdt_perps() -> List[str]:
-    info = SESSION.get("https://fapi.binance.com/fapi/v1/exchangeInfo", timeout=20).json()
-    perps = {
-        s["symbol"]
-        for s in info["symbols"]
-        if s.get("contractType") == "PERPETUAL" and s.get("quoteAsset") == "USDT" and s.get("status") == "TRADING"
-    }
-    tickers = SESSION.get("https://fapi.binance.com/fapi/v1/ticker/24hr", timeout=20).json()
-    ranked = sorted(
-        [(t["symbol"], float(t.get("quoteVolume", 0.0))) for t in tickers if t["symbol"] in perps],
-        key=lambda x: x[1],
-        reverse=True,
-    )
-    syms = [s for s, _ in ranked[:500]]
-    if "BTCUSDT" not in syms:
-        syms.insert(0, "BTCUSDT")
-    return syms[:500]
+    # 1. Try Binance REST API (if not geo-restricted)
+    try:
+        info = SESSION.get("https://fapi.binance.com/fapi/v1/exchangeInfo", timeout=10).json()
+        if "symbols" in info:
+            perps = {
+                s["symbol"]
+                for s in info["symbols"]
+                if s.get("contractType") == "PERPETUAL" and s.get("quoteAsset") == "USDT" and s.get("status") == "TRADING"
+            }
+            tickers = SESSION.get("https://fapi.binance.com/fapi/v1/ticker/24hr", timeout=10).json()
+            if isinstance(tickers, list) and len(tickers) > 0 and "quoteVolume" in tickers[0]:
+                ranked = sorted(
+                    [(t["symbol"], float(t.get("quoteVolume", 0.0))) for t in tickers if t["symbol"] in perps],
+                    key=lambda x: x[1],
+                    reverse=True,
+                )
+                syms = [s for s, _ in ranked[:500]]
+                if "BTCUSDT" not in syms:
+                    syms.insert(0, "BTCUSDT")
+                return syms[:500]
+    except Exception as e:
+        log(f"fapi.binance.com unavailable ({e}), using Vision S3 direct listing...")
+
+    # 2. Resilient Fallback: Query public Binance Vision S3 bucket directly (no geo-blocking)
+    import xml.etree.ElementTree as ET
+    v_url = "https://s3-ap-northeast-1.amazonaws.com/data.binance.vision?delimiter=/&prefix=data/futures/um/monthly/klines/"
+    r = SESSION.get(v_url, timeout=15)
+    root = ET.fromstring(r.content)
+    ns = {"s3": "http://s3.amazonaws.com/doc/2006-03-01/"}
+    prefixes = [p.find("s3:Prefix", ns).text.split("/")[-2] for p in root.findall("s3:CommonPrefixes", ns)]
+    usdt_perps = [p for p in prefixes if p.endswith("USDT") and not any(p.endswith(x) for x in ["UPUSDT", "DOWNUSDT"])]
+
+    top_anchor = [
+        "BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT", "DOGEUSDT", "ADAUSDT", "AVAXUSDT",
+        "SUIUSDT", "LINKUSDT", "NEARUSDT", "APTUSDT", "ARBUSDT", "OPUSDT", "1000PEPEUSDT",
+        "1000SHIBUSDT", "1000BONKUSDT", "1000FLOKIUSDT", "WIFUSDT", "RENDERUSDT", "FETUSDT",
+        "INJUSDT", "TIAUSDT", "SEIUSDT", "TAOUSDT", "AAVEUSDT", "UNIUSDT", "LTCUSDT", "BCHUSDT",
+    ]
+    seen = set()
+    ordered = []
+    for s in top_anchor:
+        if s in usdt_perps and s not in seen:
+            ordered.append(s)
+            seen.add(s)
+    for s in usdt_perps:
+        if s not in seen:
+            ordered.append(s)
+            seen.add(s)
+    return ordered[:500]
 
 
 def download_zip_csv(url: str, cols: Optional[List[str]] = None) -> Optional[pd.DataFrame]:
