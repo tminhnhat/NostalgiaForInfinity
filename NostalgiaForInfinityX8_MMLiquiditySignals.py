@@ -53,7 +53,7 @@ class NostalgiaForInfinityX8_MMLiquiditySignals:
             self.config.get("mm_ai_short_threshold", nfi_params.get("mm_ai_short_threshold", 0.82))
         )
         self.ai_v3_long_threshold: float = float(
-            self.config.get("mm_ai_v3_long_threshold", nfi_params.get("mm_ai_v3_long_threshold", 0.80))
+            self.config.get("mm_ai_v3_long_threshold", nfi_params.get("mm_ai_v3_long_threshold", 0.82))
         )
         self.ai_v3_short_threshold: float = float(
             self.config.get("mm_ai_v3_short_threshold", nfi_params.get("mm_ai_v3_short_threshold", 0.78))
@@ -64,20 +64,20 @@ class NostalgiaForInfinityX8_MMLiquiditySignals:
             "801": True,
             "802": True,
             "803": True,
-            # Smart Money v3 tags (independent AI Gatekeeper v3)
+            # Smart Money v3 tags (independent AI Gatekeeper v3: 811 & 814 verified profitable)
             "811": True,
-            "812": True,
-            "813": True,
+            "812": False,
+            "813": False,
             "814": True,
             # v13.7 Core short tags (AI v2 - untouched)
             "851": True,
             "852": True,
             "853": True,
-            # Smart Money Short v3 tags (independent AI Gatekeeper v3)
-            "861": True,
-            "862": True,
-            "863": True,
-            "864": True,
+            # Smart Money Short v3 tags
+            "861": False,
+            "862": False,
+            "863": False,
+            "864": False,
         }
         overrides = self.config.get("mm_liquidity_toggles", nfi_params.get("mm_liquidity_toggles", {}))
         if isinstance(overrides, dict):
