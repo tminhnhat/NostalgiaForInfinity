@@ -57,9 +57,17 @@ class NostalgiaForInfinityX8_MMLiquiditySignals:
             "801": True,
             "802": True,
             "803": True,
+            "811": True,
+            "812": True,
+            "813": True,
+            "814": True,
             "851": True,
             "852": True,
             "853": True,
+            "861": True,
+            "862": True,
+            "863": True,
+            "864": True,
         }
         overrides = self.config.get("mm_liquidity_toggles", nfi_params.get("mm_liquidity_toggles", {}))
         if isinstance(overrides, dict):
@@ -67,8 +75,14 @@ class NostalgiaForInfinityX8_MMLiquiditySignals:
                 if str(k) in self.tag_toggles:
                     self.tag_toggles[str(k)] = bool(v)
 
-        self.mm_long_tags: List[str] = ["801_MM_AI", "802_MM_AI", "803_MM_AI"]
-        self.mm_short_tags: List[str] = ["851_MM_AI", "852_MM_AI", "853_MM_AI"]
+        self.mm_long_tags: List[str] = [
+            "801_MM_AI", "802_MM_AI", "803_MM_AI",
+            "811_MM_SFP_L", "812_MM_SQZ_L", "813_MM_ABS_L", "814_MM_FLS_L",
+        ]
+        self.mm_short_tags: List[str] = [
+            "851_MM_AI", "852_MM_AI", "853_MM_AI",
+            "861_MM_SFP_S", "862_MM_SQZ_S", "863_MM_DST_S", "864_MM_CAS_S",
+        ]
         self.all_mm_tags: List[str] = self.mm_long_tags + self.mm_short_tags
 
         self.data_provider = BinanceMMDataProvider()
@@ -96,7 +110,7 @@ class NostalgiaForInfinityX8_MMLiquiditySignals:
     @staticmethod
     def is_mm_tag(tag_str: Optional[str]) -> bool:
         raw = str(tag_str or "")
-        return "_MM_AI" in raw
+        return ("_MM_AI" in raw) or ("_MM_" in raw)
 
     def allow_mm_long_entry(self, current_time: datetime, max_per_hour: int = 2) -> bool:
         ts = current_time.timestamp()
@@ -199,6 +213,8 @@ class NostalgiaForInfinityX8_MMLiquiditySignals:
         sw_high_24h = df["high"].rolling(288, min_periods=48).max().shift(1)
         df["mm_dist_swing_low_24h"] = ((df["close"] - sw_low_24h) / df["close"].clip(lower=eps)).astype(np.float32)
         df["mm_dist_swing_high_24h"] = ((sw_high_24h - df["close"]) / df["close"].clip(lower=eps)).astype(np.float32)
+        df["mm_prev_sw_low_12h"] = df["low"].rolling(144, min_periods=24).min().shift(1).astype(np.float32)
+        df["mm_prev_sw_high_12h"] = df["high"].rolling(144, min_periods=24).max().shift(1).astype(np.float32)
 
         # 5. Causal 15m & 1h Resampled Features (self-contained, zero extra informative dependency)
         orig_dt = pd.to_datetime(df["date"], utc=True).astype("datetime64[ns, UTC]")
@@ -424,6 +440,161 @@ class NostalgiaForInfinityX8_MMLiquiditySignals:
                     df.at[idx, "enter_short"] = 1
                     df.at[idx, "enter_tag"] = tag
 
+        # =====================================================================
+        # SMART MONEY / MARKET MAKER LONG (811-814) - Deterministic Liquidity/OI
+        # =====================================================================
+        has_deriv = (
+            df["log_oi_usdt"].notna()
+            & df["retail_ls"].notna()
+            & df["top_pos_ls"].notna()
+            & df["oi_chg_1h"].notna()
+        )
+        if self.enable_mm_long:
+            sm_l_pre = has_liq & has_deriv & (df["enter_long"] == 0) & (df["enter_short"] == 0)
+            # 811_MM_SFP_L: Stop Hunt / Liquidity Sweep below 12h swing low + reclaim
+            c811 = (
+                sm_l_pre
+                & self.tag_toggles.get("811", True)
+                & (df["low"] < df["mm_prev_sw_low_12h"])
+                & (df["close"] > df["mm_prev_sw_low_12h"])
+                & (df["mm_lower_wick_ratio"] >= 0.40)
+                & (df["mm_rvol"] >= 2.3)
+                & ((df["oi_chg_15m"] <= -0.008) | (df["real_taker_buy_ratio"] >= 0.50))
+                & ((df["whale_vs_retail_div"] > 0.0) | (df["top_pos_ls"] >= 1.05))
+                & (df["btc_ret_1h"] >= -0.020)
+                & (df["mm_dist_ema200_1h"] >= -0.10)
+            )
+            # 812_MM_SQZ_L: Short Squeeze Ignition (negative funding + high retail short + taker buy surge)
+            c812 = (
+                sm_l_pre
+                & self.tag_toggles.get("812", True)
+                & ((df["funding_rate_z"] <= -1.2) | (df["funding_rate"] <= -0.00025))
+                & (df["retail_ls"] <= 1.05)
+                & (df["oi_chg_4h"] >= 0.01)
+                & (df["real_taker_buy_ratio"] >= 0.57)
+                & (df["real_taker_delta_norm"] >= 0.50)
+                & (df["mm_rvol"] >= 2.0)
+                & (df["mm_vwap_z_4h"] >= 0.2)
+                & (df["mm_vwap_z_4h"] <= 1.8)
+                & (df["mm_rsi_15m"] >= 45.0)
+                & (df["mm_rsi_15m"] <= 72.0)
+            )
+            # 813_MM_ABS_L: Whale Accumulation / Iceberg Absorption below VWAP 24h
+            c813 = (
+                sm_l_pre
+                & self.tag_toggles.get("813", True)
+                & (df["whale_vs_retail_div"] >= 0.20)
+                & (df["top_pos_ls_chg_1h"] >= 0.04)
+                & (df["mm_vwap_z_24h"] >= -2.5)
+                & (df["mm_vwap_z_24h"] <= -1.2)
+                & (df["mm_rvol"] >= 1.8)
+                & (df["mm_absorption"] >= 2.2)
+                & (df["whale_trade_size_ratio"] >= 1.20)
+                & (df["real_cvd_div_long"] > 0.03)
+                & (df["btc_ret_1h"] >= -0.015)
+                & (df["mm_ema50_slope_1h"] >= -0.015)
+            )
+            # 814_MM_FLS_L: OI Cascade Flush & Reclaim
+            c814 = (
+                sm_l_pre
+                & self.tag_toggles.get("814", True)
+                & ((df["oi_chg_1h"] <= -0.035) | (df["oi_chg_15m"] <= -0.025))
+                & (df["mm_vwap_z_24h"] <= -2.3)
+                & (df["mm_rsi_15m"] <= 30.0)
+                & (df["real_taker_buy_ratio"] >= 0.52)
+                & (df["mm_lower_wick_ratio"] >= 0.30)
+                & (df["mm_rvol"] >= 2.5)
+            )
+
+            sm_l_idx = df.index[c811 | c812 | c813 | c814]
+            if len(sm_l_idx) > 0:
+                last_sm_l = -1000
+                for idx in sm_l_idx:
+                    pos = int(df.index.get_loc(idx))
+                    if pos - last_sm_l < 48:
+                        continue
+                    last_sm_l = pos
+                    tag = (
+                        "811_MM_SFP_L" if c811.at[idx]
+                        else ("812_MM_SQZ_L" if c812.at[idx]
+                              else ("813_MM_ABS_L" if c813.at[idx] else "814_MM_FLS_L"))
+                    )
+                    df.at[idx, "enter_long"] = 1
+                    df.at[idx, "enter_tag"] = tag
+
+        # =====================================================================
+        # SMART MONEY / MARKET MAKER SHORT (861-864) - Deterministic Liquidity/OI
+        # =====================================================================
+        if self.enable_mm_short:
+            sm_s_pre = has_liq & has_deriv & (df["enter_short"] == 0) & (df["enter_long"] == 0)
+            # 861_MM_SFP_S: Bull Trap / Liquidity Sweep above 12h swing high + reject
+            c861 = (
+                sm_s_pre
+                & self.tag_toggles.get("861", True)
+                & (df["high"] > df["mm_prev_sw_high_12h"])
+                & (df["close"] < df["mm_prev_sw_high_12h"])
+                & (df["mm_upper_wick_ratio"] >= 0.40)
+                & (df["mm_rvol"] >= 2.2)
+                & (df["retail_ls"] >= 1.25)
+                & (df["real_taker_buy_ratio"] <= 0.46)
+                & (df["whale_trade_size_ratio"] >= 1.15)
+                & (df["btc_ret_15m"] <= 0.012)
+            )
+            # 862_MM_SQZ_S: Long Squeeze / Overheated Funding Flush Short
+            c862 = (
+                sm_s_pre
+                & self.tag_toggles.get("862", True)
+                & ((df["funding_rate_z"] >= 1.5) | (df["funding_rate"] >= 0.00045))
+                & (df["retail_ls"] >= 1.45)
+                & (df["mm_vwap_z_24h"] >= 2.2)
+                & (df["mm_rsi_15m"] >= 68.0)
+                & (df["top_pos_ls_chg_1h"] <= -0.02)
+                & (df["real_taker_buy_ratio"] <= 0.45)
+                & (df["real_cvd_div_short"] > 0.04)
+            )
+            # 863_MM_DST_S: Whale Distribution / Iceberg Sell above VWAP 24h
+            c863 = (
+                sm_s_pre
+                & self.tag_toggles.get("863", True)
+                & (df["top_pos_ls_chg_1h"] <= -0.04)
+                & (df["whale_vs_retail_div"] <= -0.15)
+                & (df["mm_vwap_z_24h"] >= 1.6)
+                & (df["mm_rvol"] >= 2.0)
+                & (df["mm_absorption"] >= 2.3)
+                & (df["mm_mfi_14"] >= 60.0)
+                & (df["real_cvd_div_short"] > 0.05)
+                & (df["real_taker_buy_ratio"] <= 0.47)
+            )
+            # 864_MM_CAS_S: Breakdown Cascade Follow-Through Short
+            c864 = (
+                sm_s_pre
+                & self.tag_toggles.get("864", True)
+                & (df["oi_chg_4h"] >= 0.04)
+                & (df["retail_ls"] >= 1.30)
+                & (df["mm_vwap_z_4h"] >= -1.8)
+                & (df["mm_vwap_z_4h"] <= -0.5)
+                & (df["real_taker_buy_ratio"] <= 0.40)
+                & (df["real_taker_delta_norm"] <= -0.45)
+                & (df["mm_rvol"] >= 2.0)
+                & (df["btc_ret_15m"] <= -0.003)
+            )
+
+            sm_s_idx = df.index[c861 | c862 | c863 | c864]
+            if len(sm_s_idx) > 0:
+                last_sm_s = -1000
+                for idx in sm_s_idx:
+                    pos = int(df.index.get_loc(idx))
+                    if pos - last_sm_s < 48:
+                        continue
+                    last_sm_s = pos
+                    tag = (
+                        "861_MM_SFP_S" if c861.at[idx]
+                        else ("862_MM_SQZ_S" if c862.at[idx]
+                              else ("863_MM_DST_S" if c863.at[idx] else "864_MM_CAS_S"))
+                    )
+                    df.at[idx, "enter_short"] = 1
+                    df.at[idx, "enter_tag"] = tag
+
         # Free temporary MM/OI feature columns after scoring (keep only mm_vwap_4h for custom_exit)
         drop_cols = [
             c for c in df.columns
@@ -470,6 +641,78 @@ class NostalgiaForInfinityX8_MMLiquiditySignals:
         is_opt_short = trade.is_short and (("852_MM_AI" in orig_tag) or ("853_MM_AI" in orig_tag))
         is_opt_801 = (not trade.is_short) and ("801_MM_AI" in orig_tag)
         is_opt_803 = (not trade.is_short) and ("803_MM_AI" in orig_tag)
+        is_sm_momentum = any(t in orig_tag for t in ("812_MM_SQZ_L", "862_MM_SQZ_S", "864_MM_CAS_S"))
+        is_sm_sfp = any(t in orig_tag for t in ("811_MM_SFP_L", "861_MM_SFP_S"))
+        is_sm_abs = any(t in orig_tag for t in ("813_MM_ABS_L", "814_MM_FLS_L", "863_MM_DST_S"))
+
+        if is_sm_momentum:
+            if mfe_roe >= 0.40 and current_profit <= mfe_roe - 0.07 and current_profit >= 0.30:
+                return f"exit_mm_sm_trail_t4 ( {orig_tag})"
+            if mfe_roe >= 0.25 and current_profit <= mfe_roe - 0.06 and current_profit >= 0.17:
+                return f"exit_mm_sm_trail_t3 ( {orig_tag})"
+            if mfe_roe >= 0.14 and current_profit <= 0.095 and current_profit >= 0.080:
+                return f"exit_mm_sm_trail_t2 ( {orig_tag})"
+            if mfe_roe >= 0.09 and current_profit <= 0.062 and current_profit >= 0.052:
+                return f"exit_mm_sm_trail_t1 ( {orig_tag})"
+            if current_profit <= -0.16:
+                return f"exit_mm_sm_hard_sl ( {orig_tag})"
+            if dur_hours >= 24.0 and current_profit < 0.02:
+                return f"exit_mm_sm_timestop_24h ( {orig_tag})"
+            if dur_hours >= 48.0:
+                return f"exit_mm_sm_max_48h ( {orig_tag})"
+            return None
+
+        if is_sm_sfp:
+            if mfe_roe >= 0.25 and current_profit <= mfe_roe - 0.05 and current_profit >= 0.18:
+                return f"exit_mm_sfp_trail_t3 ( {orig_tag})"
+            if mfe_roe >= 0.14 and current_profit <= 0.100 and current_profit >= 0.085:
+                return f"exit_mm_sfp_trail_t2 ( {orig_tag})"
+            if mfe_roe >= 0.085 and current_profit <= 0.060 and current_profit >= 0.048:
+                return f"exit_mm_sfp_trail_t1 ( {orig_tag})"
+            if current_profit >= 0.060 and dp is not None:
+                df_pair, _ = dp.get_analyzed_dataframe(pair, timeframe)
+                if len(df_pair) > 0:
+                    rows = df_pair.loc[df_pair["date"] <= current_time]
+                    if len(rows) > 0:
+                        vw = rows.iloc[-1].get("mm_vwap_4h", np.nan)
+                        if vw is not None and not np.isnan(float(vw)):
+                            if (not trade.is_short) and current_rate >= float(vw):
+                                return f"exit_mm_vwap_reversion ( {orig_tag})"
+                            if trade.is_short and current_rate <= float(vw):
+                                return f"exit_mm_vwap_reversion ( {orig_tag})"
+            if current_profit <= -0.16:
+                return f"exit_mm_sfp_hard_sl ( {orig_tag})"
+            if dur_hours >= 24.0 and current_profit < 0.02:
+                return f"exit_mm_sfp_timestop_24h ( {orig_tag})"
+            if dur_hours >= 48.0:
+                return f"exit_mm_sfp_max_48h ( {orig_tag})"
+            return None
+
+        if is_sm_abs:
+            if mfe_roe >= 0.28 and current_profit <= mfe_roe - 0.06 and current_profit >= 0.20:
+                return f"exit_mm_abs_trail_t3 ( {orig_tag})"
+            if mfe_roe >= 0.18 and current_profit <= mfe_roe - 0.05 and current_profit >= 0.12:
+                return f"exit_mm_abs_trail_t2 ( {orig_tag})"
+            if mfe_roe >= 0.11 and current_profit <= 0.080 and current_profit >= 0.065:
+                return f"exit_mm_abs_trail_t1 ( {orig_tag})"
+            if mfe_roe >= 0.078 and current_profit <= 0.058 and current_profit >= 0.045:
+                return f"exit_mm_abs_mfe_protect ( {orig_tag})"
+            if current_profit >= 0.065 and dp is not None:
+                df_pair, _ = dp.get_analyzed_dataframe(pair, timeframe)
+                if len(df_pair) > 0:
+                    rows = df_pair.loc[df_pair["date"] <= current_time]
+                    if len(rows) > 0:
+                        vw = rows.iloc[-1].get("mm_vwap_4h", np.nan)
+                        if vw is not None and not np.isnan(float(vw)):
+                            if (not trade.is_short) and current_rate >= float(vw):
+                                return f"exit_mm_vwap_reversion ( {orig_tag})"
+                            if trade.is_short and current_rate <= float(vw):
+                                return f"exit_mm_vwap_reversion ( {orig_tag})"
+            if current_profit <= -0.22:
+                return f"exit_mm_abs_hard_sl ( {orig_tag})"
+            if dur_hours >= 48.0:
+                return f"exit_mm_abs_max_48h ( {orig_tag})"
+            return None
 
         if is_opt_short:
             # 1. Short Exit v2 Adaptive Trailing Profit Lock (higher AvgWin, avoids +2.8% choke)
