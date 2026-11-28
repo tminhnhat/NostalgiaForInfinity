@@ -57,18 +57,18 @@ class NostalgiaForInfinityX8_MMLiquiditySignals:
             "801": True,
             "802": True,
             "803": True,
-            # Smart Money v3 tags (pending AI Gatekeeper v3 training)
-            "811": False,
-            "812": False,
-            "813": False,
-            "814": False,
+            # Smart Money v3 tags (gated via AI Gatekeeper v3)
+            "811": True,
+            "812": True,
+            "813": True,
+            "814": True,
             "851": True,
             "852": True,
             "853": True,
-            "861": False,
-            "862": False,
-            "863": False,
-            "864": False,
+            "861": True,
+            "862": True,
+            "863": True,
+            "864": True,
         }
         overrides = self.config.get("mm_liquidity_toggles", nfi_params.get("mm_liquidity_toggles", {}))
         if isinstance(overrides, dict):
@@ -87,8 +87,8 @@ class NostalgiaForInfinityX8_MMLiquiditySignals:
         self.all_mm_tags: List[str] = self.mm_long_tags + self.mm_short_tags
 
         self.data_provider = BinanceMMDataProvider()
-        self.long_ai = self._load_model("user_data/models/mm_long_gatekeeper_v2_500p.pkl")
-        self.short_ai = self._load_model("user_data/models/mm_short_gatekeeper_v2_500p.pkl")
+        self.long_ai = self._load_model("user_data/models/mm_long_gatekeeper_v3_500p.pkl") or self._load_model("user_data/models/mm_long_gatekeeper_v2_500p.pkl")
+        self.short_ai = self._load_model("user_data/models/mm_short_gatekeeper_v3_500p.pkl") or self._load_model("user_data/models/mm_short_gatekeeper_v2_500p.pkl")
 
         # Anti-correlation cooldown tracker for Long entries (max 2 MM Long entries per 60 minutes)
         self._recent_long_entry_ts: List[float] = []
@@ -354,7 +354,62 @@ class NostalgiaForInfinityX8_MMLiquiditySignals:
                 & oi_flush_ok_803
             )
 
-            cand_idx = df.index[c801 | c802 | c803]
+            # =================================================================
+            # SMART MONEY LONG CANDIDATES (811-814)
+            # =================================================================
+            c811 = (
+                has_liq
+                & (df["enter_long"] == 0)
+                & self.tag_toggles.get("811", True)
+                & (df["mm_dist_swing_low_24h"] >= -0.005)
+                & (df["mm_dist_swing_low_24h"] <= 0.015)
+                & (df["mm_lower_wick_ratio"] >= 0.40)
+                & (df["mm_rvol"] >= 2.2)
+                & (df["mm_vwap_z_24h"] <= -1.8)
+                & ((df["oi_chg_15m"] <= -0.010) | (df["oi_chg_1h"] <= -0.020) | (df["real_taker_buy_ratio"] >= 0.52))
+                & ((df["whale_vs_retail_div"] > 0.0) | (df["top_pos_ls"] >= 1.05))
+                & (df["btc_ret_1h"] >= -0.020)
+                & (df["mm_dist_ema200_1h"] >= -0.10)
+            )
+            c812 = (
+                has_liq
+                & (df["enter_long"] == 0)
+                & self.tag_toggles.get("812", True)
+                & ((df["funding_rate_z"] <= -1.4) | (df["funding_rate"] <= -0.00025))
+                & (df["retail_ls"] <= 1.05)
+                & (df["real_taker_buy_ratio"] >= 0.58)
+                & (df["mm_rvol"] >= 2.0)
+                & (df["mm_vwap_z_4h"] >= 0.0)
+                & (df["mm_vwap_z_4h"] <= 1.8)
+                & (df["mm_rsi_15m"] >= 45.0)
+                & (df["mm_rsi_15m"] <= 72.0)
+            )
+            c813 = (
+                has_liq
+                & (df["enter_long"] == 0)
+                & self.tag_toggles.get("813", True)
+                & (df["whale_vs_retail_div"] >= 0.15)
+                & (df["top_pos_ls_chg_1h"] >= 0.03)
+                & (df["mm_vwap_z_24h"] <= -1.8)
+                & (df["mm_rvol"] >= 2.0)
+                & (df["mm_absorption"] >= 2.2)
+                & (df["whale_trade_size_ratio"] >= 1.20)
+                & (df["real_cvd_div_long"] > 0.03)
+                & (df["btc_ret_1h"] >= -0.015)
+            )
+            c814 = (
+                has_liq
+                & (df["enter_long"] == 0)
+                & self.tag_toggles.get("814", True)
+                & ((df["oi_chg_1h"] <= -0.030) | (df["oi_chg_15m"] <= -0.020))
+                & (df["mm_vwap_z_24h"] <= -2.2)
+                & (df["mm_rsi_15m"] <= 32.0)
+                & (df["real_taker_buy_ratio"] >= 0.52)
+                & (df["mm_lower_wick_ratio"] >= 0.35)
+                & (df["mm_rvol"] >= 2.2)
+            )
+
+            cand_idx = df.index[c801 | c802 | c803 | c811 | c812 | c813 | c814]
             if len(cand_idx) > 0:
                 # In live mode, enrich only the latest triggered row via Binance Futures API
                 if is_live_mode and (df.index[-1] in cand_idx) and pair:
@@ -372,13 +427,25 @@ class NostalgiaForInfinityX8_MMLiquiditySignals:
                     if pos - last_l_pos < 48:  # 4h cooldown per pair/side (matches 500p simulator)
                         continue
                     last_l_pos = pos
-                    # Restore baseline Long priority order: 801 -> 802 -> 803
-                    tag = "801_MM_AI" if c801.at[idx] else ("802_MM_AI" if c802.at[idx] else "803_MM_AI")
+                    if c801.at[idx]:
+                        tag = "801_MM_AI"
+                    elif c802.at[idx]:
+                        tag = "802_MM_AI"
+                    elif c803.at[idx]:
+                        tag = "803_MM_AI"
+                    elif c811.at[idx]:
+                        tag = "811_MM_SFP_L"
+                    elif c812.at[idx]:
+                        tag = "812_MM_SQZ_L"
+                    elif c813.at[idx]:
+                        tag = "813_MM_ABS_L"
+                    else:
+                        tag = "814_MM_FLS_L"
                     df.at[idx, "enter_long"] = 1
                     df.at[idx, "enter_tag"] = tag
 
         # =====================================================================
-        # SHORT CANDIDATES (851, 852, 853) + LightGBM Short AI v2 (>= 0.82)
+        # SHORT CANDIDATES (851-853, 861-864) + LightGBM Short AI v3 (>= 0.82)
         # =====================================================================
         if self.enable_mm_short and self.short_ai is not None:
             s_pre = (
@@ -420,7 +487,62 @@ class NostalgiaForInfinityX8_MMLiquiditySignals:
                 & (df["mm_rsi_1h"] < 70.0)
             )
 
-            cand_idx = df.index[c851 | c852 | c853]
+            # =================================================================
+            # SMART MONEY SHORT CANDIDATES (861-864)
+            # =================================================================
+            c861 = (
+                has_liq
+                & (df["enter_short"] == 0)
+                & (df["enter_long"] == 0)
+                & self.tag_toggles.get("861", True)
+                & (df["mm_dist_swing_high_24h"] >= -0.005)
+                & (df["mm_dist_swing_high_24h"] <= 0.015)
+                & (df["mm_upper_wick_ratio"] >= 0.40)
+                & (df["mm_rvol"] >= 2.2)
+                & (df["mm_vwap_z_24h"] >= 1.8)
+                & (df["retail_ls"] >= 1.30)
+                & (df["real_taker_buy_ratio"] <= 0.46)
+                & (df["whale_trade_size_ratio"] >= 1.15)
+                & (df["btc_ret_15m"] <= 0.012)
+            )
+            c862 = (
+                has_liq
+                & (df["enter_short"] == 0)
+                & (df["enter_long"] == 0)
+                & self.tag_toggles.get("862", True)
+                & ((df["funding_rate_z"] >= 1.4) | (df["funding_rate"] >= 0.00035))
+                & (df["retail_ls"] >= 1.40)
+                & (df["mm_vwap_z_24h"] >= 2.0)
+                & (df["mm_rsi_15m"] >= 65.0)
+                & (df["real_taker_buy_ratio"] <= 0.42)
+                & (df["mm_rvol"] >= 2.0)
+            )
+            c863 = (
+                has_liq
+                & (df["enter_short"] == 0)
+                & (df["enter_long"] == 0)
+                & self.tag_toggles.get("863", True)
+                & (df["top_pos_ls_chg_1h"] <= -0.03)
+                & (df["whale_vs_retail_div"] <= -0.15)
+                & (df["mm_vwap_z_24h"] >= 1.8)
+                & (df["mm_rvol"] >= 2.0)
+                & (df["mm_absorption"] >= 2.2)
+                & (df["real_taker_buy_ratio"] <= 0.46)
+            )
+            c864 = (
+                has_liq
+                & (df["enter_short"] == 0)
+                & (df["enter_long"] == 0)
+                & self.tag_toggles.get("864", True)
+                & (df["oi_chg_4h"] >= 0.04)
+                & (df["retail_ls"] >= 1.30)
+                & (df["real_taker_buy_ratio"] <= 0.38)
+                & (df["real_taker_delta_norm"] <= -0.45)
+                & (df["mm_rvol"] >= 2.0)
+                & (df["btc_ret_15m"] <= -0.003)
+            )
+
+            cand_idx = df.index[c851 | c852 | c853 | c861 | c862 | c863 | c864]
             if len(cand_idx) > 0:
                 if is_live_mode and (df.index[-1] in cand_idx) and pair:
                     snap = self.data_provider.fetch_live_snapshot(pair, float(df.at[df.index[-1], "mm_quote_vol_1h"]))
@@ -437,162 +559,20 @@ class NostalgiaForInfinityX8_MMLiquiditySignals:
                     if pos - last_s_pos < 48:  # 4h cooldown per pair/side (matches 500p simulator)
                         continue
                     last_s_pos = pos
-                    tag = "851_MM_AI" if c851.at[idx] else ("852_MM_AI" if c852.at[idx] else "853_MM_AI")
-                    df.at[idx, "enter_short"] = 1
-                    df.at[idx, "enter_tag"] = tag
-
-        # =====================================================================
-        # SMART MONEY / MARKET MAKER LONG (811-814) - Deterministic Liquidity/OI
-        # =====================================================================
-        has_deriv = (
-            df["log_oi_usdt"].notna()
-            & df["retail_ls"].notna()
-            & df["top_pos_ls"].notna()
-            & df["oi_chg_1h"].notna()
-        )
-        if self.enable_mm_long:
-            sm_l_pre = has_liq & has_deriv & (df["enter_long"] == 0) & (df["enter_short"] == 0)
-            # 811_MM_SFP_L: Stop Hunt / Liquidity Sweep below 12h swing low + reclaim
-            c811 = (
-                sm_l_pre
-                & self.tag_toggles.get("811", True)
-                & (df["low"] < df["mm_prev_sw_low_12h"])
-                & (df["close"] > df["mm_prev_sw_low_12h"])
-                & (df["mm_lower_wick_ratio"] >= 0.40)
-                & (df["mm_rvol"] >= 2.3)
-                & ((df["oi_chg_15m"] <= -0.008) | (df["real_taker_buy_ratio"] >= 0.50))
-                & ((df["whale_vs_retail_div"] > 0.0) | (df["top_pos_ls"] >= 1.05))
-                & (df["btc_ret_1h"] >= -0.020)
-                & (df["mm_dist_ema200_1h"] >= -0.10)
-            )
-            # 812_MM_SQZ_L: Short Squeeze Ignition (negative funding + high retail short + taker buy surge)
-            c812 = (
-                sm_l_pre
-                & self.tag_toggles.get("812", True)
-                & ((df["funding_rate_z"] <= -1.2) | (df["funding_rate"] <= -0.00025))
-                & (df["retail_ls"] <= 1.05)
-                & (df["oi_chg_4h"] >= 0.01)
-                & (df["real_taker_buy_ratio"] >= 0.57)
-                & (df["real_taker_delta_norm"] >= 0.50)
-                & (df["mm_rvol"] >= 2.0)
-                & (df["mm_vwap_z_4h"] >= 0.2)
-                & (df["mm_vwap_z_4h"] <= 1.8)
-                & (df["mm_rsi_15m"] >= 45.0)
-                & (df["mm_rsi_15m"] <= 72.0)
-            )
-            # 813_MM_ABS_L: Whale Accumulation / Iceberg Absorption below VWAP 24h
-            c813 = (
-                sm_l_pre
-                & self.tag_toggles.get("813", True)
-                & (df["whale_vs_retail_div"] >= 0.20)
-                & (df["top_pos_ls_chg_1h"] >= 0.04)
-                & (df["mm_vwap_z_24h"] >= -2.5)
-                & (df["mm_vwap_z_24h"] <= -1.2)
-                & (df["mm_rvol"] >= 1.8)
-                & (df["mm_absorption"] >= 2.2)
-                & (df["whale_trade_size_ratio"] >= 1.20)
-                & (df["real_cvd_div_long"] > 0.03)
-                & (df["btc_ret_1h"] >= -0.015)
-                & (df["mm_ema50_slope_1h"] >= -0.015)
-            )
-            # 814_MM_FLS_L: OI Cascade Flush & Reclaim
-            c814 = (
-                sm_l_pre
-                & self.tag_toggles.get("814", True)
-                & ((df["oi_chg_1h"] <= -0.035) | (df["oi_chg_15m"] <= -0.025))
-                & (df["mm_vwap_z_24h"] <= -2.3)
-                & (df["mm_rsi_15m"] <= 30.0)
-                & (df["real_taker_buy_ratio"] >= 0.52)
-                & (df["mm_lower_wick_ratio"] >= 0.30)
-                & (df["mm_rvol"] >= 2.5)
-            )
-
-            sm_l_idx = df.index[c811 | c812 | c813 | c814]
-            if len(sm_l_idx) > 0:
-                last_sm_l = -1000
-                for idx in sm_l_idx:
-                    pos = int(df.index.get_loc(idx))
-                    if pos - last_sm_l < 48:
-                        continue
-                    last_sm_l = pos
-                    tag = (
-                        "811_MM_SFP_L" if c811.at[idx]
-                        else ("812_MM_SQZ_L" if c812.at[idx]
-                              else ("813_MM_ABS_L" if c813.at[idx] else "814_MM_FLS_L"))
-                    )
-                    df.at[idx, "enter_long"] = 1
-                    df.at[idx, "enter_tag"] = tag
-
-        # =====================================================================
-        # SMART MONEY / MARKET MAKER SHORT (861-864) - Deterministic Liquidity/OI
-        # =====================================================================
-        if self.enable_mm_short:
-            sm_s_pre = has_liq & has_deriv & (df["enter_short"] == 0) & (df["enter_long"] == 0)
-            # 861_MM_SFP_S: Bull Trap / Liquidity Sweep above 12h swing high + reject
-            c861 = (
-                sm_s_pre
-                & self.tag_toggles.get("861", True)
-                & (df["high"] > df["mm_prev_sw_high_12h"])
-                & (df["close"] < df["mm_prev_sw_high_12h"])
-                & (df["mm_upper_wick_ratio"] >= 0.40)
-                & (df["mm_rvol"] >= 2.2)
-                & (df["retail_ls"] >= 1.25)
-                & (df["real_taker_buy_ratio"] <= 0.46)
-                & (df["whale_trade_size_ratio"] >= 1.15)
-                & (df["btc_ret_15m"] <= 0.012)
-            )
-            # 862_MM_SQZ_S: Long Squeeze / Overheated Funding Flush Short
-            c862 = (
-                sm_s_pre
-                & self.tag_toggles.get("862", True)
-                & ((df["funding_rate_z"] >= 1.5) | (df["funding_rate"] >= 0.00045))
-                & (df["retail_ls"] >= 1.45)
-                & (df["mm_vwap_z_24h"] >= 2.2)
-                & (df["mm_rsi_15m"] >= 68.0)
-                & (df["top_pos_ls_chg_1h"] <= -0.02)
-                & (df["real_taker_buy_ratio"] <= 0.45)
-                & (df["real_cvd_div_short"] > 0.04)
-            )
-            # 863_MM_DST_S: Whale Distribution / Iceberg Sell above VWAP 24h
-            c863 = (
-                sm_s_pre
-                & self.tag_toggles.get("863", True)
-                & (df["top_pos_ls_chg_1h"] <= -0.04)
-                & (df["whale_vs_retail_div"] <= -0.15)
-                & (df["mm_vwap_z_24h"] >= 1.6)
-                & (df["mm_rvol"] >= 2.0)
-                & (df["mm_absorption"] >= 2.3)
-                & (df["mm_mfi_14"] >= 60.0)
-                & (df["real_cvd_div_short"] > 0.05)
-                & (df["real_taker_buy_ratio"] <= 0.47)
-            )
-            # 864_MM_CAS_S: Breakdown Cascade Follow-Through Short
-            c864 = (
-                sm_s_pre
-                & self.tag_toggles.get("864", True)
-                & (df["oi_chg_4h"] >= 0.04)
-                & (df["retail_ls"] >= 1.30)
-                & (df["mm_vwap_z_4h"] >= -1.8)
-                & (df["mm_vwap_z_4h"] <= -0.5)
-                & (df["real_taker_buy_ratio"] <= 0.40)
-                & (df["real_taker_delta_norm"] <= -0.45)
-                & (df["mm_rvol"] >= 2.0)
-                & (df["btc_ret_15m"] <= -0.003)
-            )
-
-            sm_s_idx = df.index[c861 | c862 | c863 | c864]
-            if len(sm_s_idx) > 0:
-                last_sm_s = -1000
-                for idx in sm_s_idx:
-                    pos = int(df.index.get_loc(idx))
-                    if pos - last_sm_s < 48:
-                        continue
-                    last_sm_s = pos
-                    tag = (
-                        "861_MM_SFP_S" if c861.at[idx]
-                        else ("862_MM_SQZ_S" if c862.at[idx]
-                              else ("863_MM_DST_S" if c863.at[idx] else "864_MM_CAS_S"))
-                    )
+                    if c851.at[idx]:
+                        tag = "851_MM_AI"
+                    elif c852.at[idx]:
+                        tag = "852_MM_AI"
+                    elif c853.at[idx]:
+                        tag = "853_MM_AI"
+                    elif c861.at[idx]:
+                        tag = "861_MM_SFP_S"
+                    elif c862.at[idx]:
+                        tag = "862_MM_SQZ_S"
+                    elif c863.at[idx]:
+                        tag = "863_MM_DST_S"
+                    else:
+                        tag = "864_MM_CAS_S"
                     df.at[idx, "enter_short"] = 1
                     df.at[idx, "enter_tag"] = tag
 
@@ -709,7 +689,7 @@ class NostalgiaForInfinityX8_MMLiquiditySignals:
                                 return f"exit_mm_vwap_reversion ( {orig_tag})"
                             if trade.is_short and current_rate <= float(vw):
                                 return f"exit_mm_vwap_reversion ( {orig_tag})"
-            if current_profit <= -0.22:
+            if current_profit <= -0.16:
                 return f"exit_mm_abs_hard_sl ( {orig_tag})"
             if dur_hours >= 48.0:
                 return f"exit_mm_abs_max_48h ( {orig_tag})"
